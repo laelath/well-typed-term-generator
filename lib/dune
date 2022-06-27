@@ -1,0 +1,2 @@
+(library
+ (name not_useless))
