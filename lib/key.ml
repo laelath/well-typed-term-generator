@@ -25,7 +25,7 @@ module Make (Prefix : X_string) : S = struct
   let to_string x = Prefix.x ^ (Int.to_string x)
   let equal = Int.equal
   let compare = Int.compare
-              
+
   module Tbl = Hashtbl.Make (struct include Int let hash i = i end)
   module Map = Map.Make (Int)
   module Set = Set.Make (Int)
