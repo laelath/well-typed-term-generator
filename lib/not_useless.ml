@@ -1,8 +1,8 @@
 
-(* Each node has a unique label, which cannot be changed. 
-   if we have some node (call e1_l1 e2_l2) and we are updating e1 to (let (x rhs) e1), 
-   it's tempting to overwrite the l1 label to point to this new node. 
-   The problem is that we have update maps `type extension var -> program location set` 
+(* Each node has a unique label, which cannot be changed.
+   if we have some node (call e1_l1 e2_l2) and we are updating e1 to (let (x rhs) e1),
+   it's tempting to overwrite the l1 label to point to this new node.
+   The problem is that we have update maps `type extension var -> program location set`
    that point to where syntactic updates need to happen, and we don't want to update these.
 
    Each node also has a `prev` pointer, so there's no term sharing
@@ -31,27 +31,27 @@ let assert_is_hole (Exp.ExpNode node) =
 
 
 (* Implements the rule:
-   E ~> E{alpha + tau} 
+   E ~> E{alpha + tau}
  *)
-let extend_extvar (prog : Exp.program) (extvar : Exp.extvar) (ext_ty : Exp.ty_label) = 
-  let extend : 'a 'b . Exp.extvar -> (Exp.extvar -> 'a list) -> ('a -> unit) -> unit = 
+let extend_extvar (prog : Exp.program) (extvar : Exp.extvar) (ext_ty : Exp.ty_label) =
+  let extend : 'a 'b . Exp.extvar -> (Exp.extvar -> 'a list) -> ('a -> unit) -> unit =
     fun ext get add ->
     let lst = get ext in let handle_elt elt = add elt in
     List.iter handle_elt lst in
 
-  let () = extend extvar prog.extvar_ty_params 
+  let () = extend extvar prog.extvar_ty_params
                   (fun ty_params -> prog.add_ty_param ty_params ext_ty) in
   let () = extend extvar prog.extvar_params
                   (fun param -> prog.add_param param (prog.new_var())) in
-  let () = extend extvar prog.extvar_args 
-                  (fun arg -> let node = Exp.ExpNode {exp = Exp.Hole; 
-                                                      ty = ext_ty; 
+  let () = extend extvar prog.extvar_args
+                  (fun arg -> let node = Exp.ExpNode {exp = Exp.Hole;
+                                                      ty = ext_ty;
                                                       prev = Some (prog.args_parent arg)} in
                               prog.add_arg arg (prog.new_exp node)) in
   ()
 
 (* takes E[e] and finds all lambdas i such that E_1[lambda_i xs . E_2[e]] *)
-let rec find_enclosing_lambdas (prog : Exp.program) (e : Exp.exp_label) acc : (Exp.params_label list) = 
+let rec find_enclosing_lambdas (prog : Exp.program) (e : Exp.exp_label) acc : (Exp.params_label list) =
   let Exp.ExpNode node = prog.get_exp e in
   let acc = match node.exp with
     | Lambda lam -> lam.params :: acc
@@ -62,19 +62,19 @@ let rec find_enclosing_lambdas (prog : Exp.program) (e : Exp.exp_label) acc : (E
 
 
 (*
-  TRANSITIONS 
+  TRANSITIONS
  *)
 
 exception BadTransition
 
 (* Implements the rule:
-   E_1[lambda_i xs alpha . E_2[<>]] ~> 
+   E_1[lambda_i xs alpha . E_2[<>]] ~>
    E_1{alpha + tau}[lambda_i (x::xs) alpha . E_2{alpha + tau}[x]]
 
    via the decomposition
 
-   E_1[lambda_i xs alpha . E_2[<>]] ~> 
-   E_1{alpha + tau}[lambda_i (x::xs) alpha . E_2{alpha+tau}[<>]] ~> 
+   E_1[lambda_i xs alpha . E_2[<>]] ~>
+   E_1{alpha + tau}[lambda_i (x::xs) alpha . E_2{alpha+tau}[<>]] ~>
    E_1{alpha + tau}[lambda_i (x::xs) alpha . E_2{alpha + tau}[x]]
 
  *)
@@ -106,10 +106,10 @@ let create_ext_function_call (st : state) (prog : Exp.program) (e : Exp.exp_labe
 (* Implements the rule:
    E[<>] ~> E[lambda xs alpha . <>]
  *)
-let create_ext_lambda (st : state) (prog : Exp.program) (e : Exp.exp_label) = 
+let create_ext_lambda (st : state) (prog : Exp.program) (e : Exp.exp_label) =
   let Exp.ExpNode {ty=ty; prev=prev; _} = prog.get_exp e in
   match prog.get_ty ty with
-  | Exp.TyNode {ty = Exp.TyArrowExt {ty_params=ty_params; ty_im=ty_im}} -> 
+  | Exp.TyNode {ty = Exp.TyArrowExt {ty_params=ty_params; ty_im=ty_im}} ->
      let extvar = prog.ty_params_extvar ty_params in
      let params_label = prog.new_params extvar in
      let xs = List.map (fun _ -> prog.new_var()) (prog.get_ty_params ty_params) in
@@ -133,9 +133,9 @@ let create_ext_lambda (st : state) (prog : Exp.program) (e : Exp.exp_label) =
 
 
 
-(* 
+(*
    MAIN LOOP
- *) 
+ *)
 
 let generate_exp (st : state) (prog : Exp.program) (e : Exp.exp_label) =
   let node = prog.get_exp e in
@@ -155,7 +155,7 @@ let generate (st : state) (prog : Exp.program) : bool =
 
 
 let generate_fp (st : state) (prog : Exp.program) : unit =
-  let rec lp () = 
+  let rec lp () =
     match generate st prog with
     | false -> ()
     | true -> lp() in
