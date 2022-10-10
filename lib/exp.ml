@@ -26,13 +26,10 @@ module DataTy = Key.Make (struct let x="d" end)
 
 (* type datatype *)
 type ty = (* TyArrow of ty_label list * ty_label *)
+  | TyInt | TyBool
   | TyArrowExt of {
       ty_params : ty_params_label;
       ty_im : ty_label;
-    }
-  | TyData of {
-      dcon_ty : DataTy.t;
-      arg_tys : ty_label list;
     }
      (* | TyVar of ty_var *)
 type ty_node = TyNode of {ty : ty}
@@ -74,6 +71,18 @@ type exp =
       func : exp_label;
       args : args_label;
     }
+  | ValInt of {
+      value : int;
+    }
+  | ValBool of {
+      value : bool;
+    }
+  | If of {
+      pred : exp_label;
+      thn : exp_label;
+      els : exp_label;
+    }
+(*
   | Data of {
       dcon : Data.dcon;
       args : exp_label list;
@@ -87,6 +96,7 @@ and pat = {
     params : var list;
     body : exp_label;
   }
+*)
 (* | Prim of prim * label list *)
 
 (* expression nodes *)
@@ -106,8 +116,8 @@ type program = {
     new_extvar : unit -> extvar;
 
     (* type operations *)
-    new_ty : ty_node -> ty_label;
-    get_ty : ty_label -> ty_node;
+    new_ty : ty -> ty_label;
+    get_ty : ty_label -> ty;
 
     (* expression operations *)
     new_exp : exp_node -> exp_label;
@@ -163,11 +173,18 @@ let make_program ty =
   let new_var () = Var.make() in
   let new_extvar () = ExtVar.make () in
 
-  let new_ty node =
-    let lab = TypeLabel.make() in
-    let () = TypeLabel.Tbl.add ty_tbl lab node in
+  let new_ty =
+    let bool_lab = TypeLabel.make () in
+    let () = TypeLabel.Tbl.add ty_tbl bool_lab (TyNode {ty=TyBool}) in
+    let int_lab = TypeLabel.make () in
+    let () = TypeLabel.Tbl.add ty_tbl int_lab (TyNode {ty=TyInt}) in
+    fun ty' ->
+    let lab = TypeLabel.make () in
+    let () = TypeLabel.Tbl.add ty_tbl lab (TyNode {ty=ty'}) in
     lab in
-  let get_ty lab = TypeLabel.Tbl.find ty_tbl lab in
+  let get_ty lab =
+    let TyNode {ty=ty} = TypeLabel.Tbl.find ty_tbl lab in
+    ty in
 
   let new_exp node =
     let lab = ExpLabel.make() in
@@ -201,7 +218,7 @@ let make_program ty =
   let get_params lab = ParamsLabel.Tbl.find params_tbl lab in
   let add_param lab var =
     let () = ParamsLabel.Tbl.replace params_tbl lab
-                                       (var :: (ParamsLabel.Tbl.find params_tbl lab)) in
+                                     (var :: (ParamsLabel.Tbl.find params_tbl lab)) in
     () in
   let extvar_params extvar = ExtVar.Tbl.find extvar_params_tbl extvar in
   let params_extvar lab = ParamsLabel.Tbl.find params_extvar_tbl lab in
@@ -218,13 +235,13 @@ let make_program ty =
   let get_args lab = ArgsLabel.Tbl.find args_tbl lab in
   let add_arg lab node =
     let () = ArgsLabel.Tbl.replace args_tbl lab
-                                       (node :: (ArgsLabel.Tbl.find args_tbl lab)) in
+                                   (node :: (ArgsLabel.Tbl.find args_tbl lab)) in
     () in
   let extvar_args extvar = ExtVar.Tbl.find extvar_args_tbl extvar in
   let args_extvar lab = ArgsLabel.Tbl.find args_extvar_tbl lab in
   let args_parent lab = ArgsLabel.Tbl.find args_parent_tbl lab in
 
-  let head = new_exp (ExpNode {exp=Hole; ty=new_ty (TyNode {ty=ty}); prev=None}) in
+  let head = new_exp (ExpNode {exp=Hole; ty=new_ty ty; prev=None}) in
 
   {
     head = head;
@@ -271,6 +288,7 @@ exception ConsistencyError of string
 
 (* check that the prev pointers are correct,
    and that each node points to itself *)
+(* TODO: check that node environments are correct *)
 let consistencyCheck prog =
   let rec consistencyCheckExp prev e =
     let ExpNode {exp=exp; ty=_; prev=p} = prog.get_exp e in
@@ -279,6 +297,9 @@ let consistencyCheck prog =
     else match exp with
          | Hole -> ()
          | Var {var=_} -> ()
+
+         | ValInt {value=_} -> ()
+         | ValBool {value=_} -> ()
 
          | Let {var=_; rhs=rhs; body=body} ->
            consistencyCheckExp (Some e) rhs;
@@ -291,8 +312,15 @@ let consistencyCheck prog =
            List.iter (consistencyCheckExp (Some e)) (prog.get_args args);
            consistencyCheckExp (Some e) func
 
-         | Data {dcon=_; args=args} -> () (* todo *)
-         | Match {arg=arg; pats=pats} -> () (* todo *)
+         | If {pred=pred; thn=thn; els=els} ->
+           consistencyCheckExp (Some e) pred;
+           consistencyCheckExp (Some e) thn;
+           consistencyCheckExp (Some e) els
+
+(*
+         | Data {dcon=_; args=_} -> () (* todo *)
+         | Match {arg=_; pats=_} -> () (* todo *)
+*)
     in
   consistencyCheckExp None prog.head
 
@@ -316,6 +344,16 @@ let typeCheck prog =
        | None -> raise (TypeCheckError "Variable not in scope")
        | Some ty' -> ensureSameTy ty ty'; ty)
 
+    | ValInt {value=_} ->
+      if (prog.get_ty ty) == TyInt
+      then ty
+      else raise (TypeCheckError "ValInt doesn't have type TyInt")
+
+    | ValBool {value=_} ->
+      if (prog.get_ty ty) == TyBool
+      then ty
+      else raise (TypeCheckError "ValBool doesn't have type TyBool")
+
     | Let {var=var; rhs=rhs; body=body} ->
       let rhs_ty = typeCheckExp gamma rhs in
       let body_ty = typeCheckExp ((var, rhs_ty) :: gamma) body in
@@ -324,8 +362,7 @@ let typeCheck prog =
     (* todo: check and raise custom error when arg names and types
              have different lengths *)
     | Lambda {params=params; body=body} ->
-      let TyNode {ty=t} = prog.get_ty ty in
-      (match t with
+      (match (prog.get_ty ty) with
        | TyArrowExt {ty_params; ty_im} ->
          let vars = prog.get_params params in
          let tys = prog.get_ty_params ty_params in
@@ -343,8 +380,7 @@ let typeCheck prog =
            typeCheckArgs exps' tys'
          | _ -> raise (TypeCheckError "number of function call args differs from type")) in
       let func_ty = typeCheckExp gamma func in
-      let TyNode {ty=t} = prog.get_ty func_ty in
-      (match t with
+      (match (prog.get_ty func_ty) with
        | TyArrowExt {ty_params=ty_params; ty_im=ty_im} ->
          ensureSameTy ty ty_im;
          let exps = prog.get_args args in
@@ -352,15 +388,25 @@ let typeCheck prog =
          typeCheckArgs exps tys; ty
        | _ -> raise (TypeCheckError "callee exp not function type"))
 
-    | Data {dcon=dcon; args=args} -> ty (* todo *)
+    | If {pred=pred; thn=thn; els=els} ->
+      let typ = prog.get_ty (typeCheckExp gamma pred) in
+      if typ == TyBool
+      then (ensureSameTy ty (typeCheckExp gamma thn);
+            ensureSameTy ty (typeCheckExp gamma els);
+            ty)
+      else raise (TypeCheckError "")
 
-    | Match {arg=arg; pats=pats} ->
-      let arg_ty = typeCheckExp gamma arg in
+(*
+    | Data {dcon=_; args=_} -> ty (* todo *)
+
+    | Match {arg=arg; pats=_} ->
+      let _ = typeCheckExp gamma arg in
       ty
       (* todo: check that arg has the right data type*)
       (* todo: want a totality check? *)
       (* todo: i have no idea what is going on with dcons at all *)
       (* todo: wtaf am i supposed to do here *)
+*)
   in
   (* throw away the type label *)
   let _ = typeCheckExp [] prog.head in
