@@ -48,13 +48,14 @@ let extend_extvar (prog : Exp.program) (extvar : Exp.extvar) (ext_ty : Exp.ty_la
     let handle_elt elt = add elt in
     List.iter handle_elt lst in
 
-  (* TODO: there has to be a better way... *)
-  let exp_lbls = ref [] in
-
   extend extvar prog.extvar_ty_params
          (fun ty_params -> prog.add_ty_param ty_params ext_ty);
   extend extvar prog.extvar_params
          (fun param -> prog.add_param param (prog.new_var()));
+
+  (* Justin: there has to be a better way... *)
+  (* Ben: no *)
+  let exp_lbls = ref [] in
   extend extvar prog.extvar_args
          (fun arg ->
           let app_lbl = prog.args_parent arg in
@@ -76,6 +77,7 @@ let rec find_vars (prog : Exp.program) (e : Exp.exp_label option) (ty : Exp.ty_l
                       | TyArrowExt {ty_params=ty_params; _} -> ty_params
                       | _ -> raise (InternalError "lambda does not have arrow type") in
       let binds = List.combine (prog.get_params lam.params) (prog.get_ty_params ty_params) in
+      (* TODO: don't use strict type label equality *)
       let binds' = List.filter (fun b -> snd b == ty) binds in
       List.append binds' vars
     | _ -> find_vars prog node.prev ty
@@ -108,29 +110,32 @@ exception BadTransition
    E_1{alpha + tau}[lambda_i (x::xs) alpha . E_2{alpha + tau}[x]]
  *)
 let not_useless_rule (params : Exp.params_label list) (prog : Exp.program) (e : Exp.exp_label) =
-  let Exp.ExpNode {ty=ty; _} = prog.get_exp e in
+  let Exp.ExpNode {ty=ty; prev=prev; _} = prog.get_exp e in
   (* TODO: filter params by ty, don't want to cause circularities? *)
   let param = choose params in
   let extvar = prog.params_extvar param in
   let holes = extend_extvar prog extvar ty in
 
   let x = List.hd (prog.get_params param) in
-  (Exp.Var {var=x}, holes)
+  prog.set_exp e (Exp.ExpNode {exp=Exp.Var {var=x}; ty=ty; prev=prev});
+  holes
 
 (* Implements the rule:
    E[<>] ~> E[call <> alpha] where alpha is fresh
  *)
 let create_ext_function_call (prog : Exp.program) (e : Exp.exp_label) =
-  let Exp.ExpNode {ty=ty; _} = prog.get_exp e in
+  let Exp.ExpNode {ty=ty; prev=prev; _} = prog.get_exp e in
   let extvar = prog.new_extvar() in
   let f_ty = prog.new_ty (Exp.TyArrowExt {ty_params=prog.new_ty_params extvar; ty_im=ty}) in
-  let f = prog.new_exp (Exp.ExpNode {exp=Hole; ty=f_ty; prev=Some e}) in
+  let f = prog.new_exp (Exp.ExpNode {exp=Exp.Hole; ty=f_ty; prev=Some e}) in
   let args = prog.new_args extvar e in
-  (Exp.Call {func=f; args=args}, [f])
+  prog.set_exp e (Exp.ExpNode {exp=Exp.Call {func=f; args=args}; ty=ty; prev=prev});
+  [f]
 
 (* Implements the rule:
    E[<>] ~> E[lambda xs alpha . <>]
  *)
+(* TODO: make a helper for create_constructor *)
 let create_ext_lambda (st : state) (prog : Exp.program) (e : Exp.exp_label) =
   let Exp.ExpNode {ty=ty; prev=prev; _} = prog.get_exp e in
   match prog.get_ty ty with
@@ -148,24 +153,27 @@ let create_ext_lambda (st : state) (prog : Exp.program) (e : Exp.exp_label) =
 (* Implements the rule:
    E[<>] ~> E[x]
  *)
-let create_var (vars : (Exp.var * Exp.ty_label) list) (_ : Exp.program) (_ : Exp.exp_label) =
-  (Exp.Var {var=fst (choose vars)}, [])
+let create_var (vars : (Exp.var * Exp.ty_label) list) (prog : Exp.program) (e : Exp.exp_label) =
+  let Exp.ExpNode {ty=ty; prev=prev; _} = prog.get_exp e in
+  prog.set_exp e (Exp.ExpNode {exp=Exp.Var {var=fst (choose vars)}; ty=ty; prev=prev});
+  []
 
 (* Implements the rule *)
 let create_if (prog : Exp.program) (e : Exp.exp_label) =
-  let Exp.ExpNode {ty=ty; _} = prog.get_exp e in
+  let Exp.ExpNode {ty=ty; prev=prev; _} = prog.get_exp e in
   let pred = prog.new_exp (Exp.ExpNode {exp=Exp.Hole; ty=prog.new_ty Exp.TyBool; prev=Some e}) in
   let thn = prog.new_exp (Exp.ExpNode {exp=Exp.Hole; ty=ty; prev=Some e}) in
   let els = prog.new_exp (Exp.ExpNode {exp=Exp.Hole; ty=ty; prev=Some e}) in
-  (Exp.If {pred=pred; thn=thn; els=els}, [pred; thn; els])
+  prog.set_exp e (Exp.ExpNode {exp=Exp.If {pred=pred; thn=thn; els=els}; ty=ty; prev=prev});
+  [pred; thn; els]
 
 (* Implements the rule:
    E[<>] ~> E[dcon <> ... <>]
  *)
 let create_constructor (prog : Exp.program) (e : Exp.exp_label) =
-  let Exp.ExpNode {ty=ty; _} = prog.get_exp e in
-  match (prog.get_ty ty) with
-  | TyBool -> (Exp.ValBool {value=false}, [])
+  let Exp.ExpNode {ty=ty; prev=prev; _} = prog.get_exp e in
+  let (exp, holes) = match (prog.get_ty ty) with
+  | TyBool -> (Exp.ValBool {value=choose [false; true]}, [])
   | TyInt -> (Exp.ValInt {value=0}, [])
   | TyArrowExt {ty_params=ty_params; ty_im=ty_im} ->
     let extvar = prog.ty_params_extvar ty_params in
@@ -173,47 +181,45 @@ let create_constructor (prog : Exp.program) (e : Exp.exp_label) =
     let xs = List.map (fun _ -> prog.new_var()) (prog.get_ty_params ty_params) in
     List.iter (prog.add_param params_label) xs;
     let body = prog.new_exp (Exp.ExpNode {exp=Exp.Hole; ty=ty_im; prev=Some e}) in
-    (Exp.Lambda {params=params_label; body=body}, [body])
+    (Exp.Lambda {params=params_label; body=body}, [body]) in
+  prog.set_exp e (Exp.ExpNode {exp=exp; ty=ty; prev=prev});
+  holes
+
 
 (*
    MAIN LOOP
  *)
 
+let assert_hole (exp : Exp.exp) =
+  match exp with
+  | Exp.Hole -> ()
+  | _ -> raise (InternalError "exp is not a hole")
+
 (* 1. find the list of variables that can be referenced
    2. find the list of binding locations
    3. choose between a variable reference, an application, an if, or a constructor *)
 
-let generate_exp (st : state) (prog : Exp.program) (e : Exp.exp_label) =
+let generate_exp (size : int) (prog : Exp.program) (e : Exp.exp_label) =
   let Exp.ExpNode {exp=exp; ty=ty; prev=prev} = prog.get_exp e in
-  (match exp with
-   | Exp.Hole -> ()
-   | _ -> raise (InternalError "generation exp is not a hole"));
+  assert_hole exp;
   let vars = find_vars prog prev ty in
   let binds = find_enclosing_lambdas prog prev [] in
-  let generators = [(List.length vars, create_var vars);
-                    (1, create_constructor);
-                    (st.size / 3, create_if);
-                    (st.size / 2, create_ext_function_call);
-                    (max 0 (st.size - List.length binds), not_useless_rule binds)] in
-  let (e', holes) = choose_frequency generators prog e in
-  st.size <- if st.size > 0 then st.size - 1 else 0;
-  prog.set_exp e (Exp.ExpNode {exp=e'; ty=ty; prev=prev});
-  List.iter (fun hole -> st.worklist.add hole) holes
-(*
-  let transitions = [not_useless_rule; create_ext_function_call; create_ext_lambda] in
-  let rec lp ts =
-    let t, ts = choose_split ts in
-    try t st prog e with
-    | BadTransition -> lp ts in
-  let () = lp transitions in
-  ()
-*)
+  let rules = [(List.length vars, create_var vars);
+               (1, create_constructor);
+               (size / 3, create_if);
+               (size / 2, create_ext_function_call);
+               (min size (List.length binds), not_useless_rule binds)] in
+  (* inline setting the exp because of let-insertion *)
+  (choose_frequency rules) prog e
 
 let generate (st : state) (prog : Exp.program) : bool =
   match st.worklist.pop () with
   | None -> false
-  | Some e -> (generate_exp st prog e; true)
-
+  | Some e ->
+    let holes = generate_exp st.size prog e in
+    List.iter (fun hole -> st.worklist.add hole) holes;
+    st.size <- if st.size > 0 then st.size - 1 else 0;
+    true
 
 let generate_fp (st : state) (prog : Exp.program) : unit =
   let rec lp () =
