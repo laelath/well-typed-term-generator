@@ -13,7 +13,13 @@ let choose (lst : 'a list) : 'a =
  let i = Random.int (List.length lst) in
  List.nth lst i
 
-(*let choose_split (lst : 'a list) : 'a * ('a list) = List.hd lst, List.tl lst*)
+let choose_split (lst : 'a list) : 'a * ('a list) =
+  let rec extract i lst =
+    if i == 0
+    then (List.hd lst, List.tl lst)
+    else let (a, lst') = extract (i - 1) (List.tl lst) in
+         (a, List.hd lst :: lst') in
+  extract (Random.int (List.length lst)) lst
 
 let rec get_freq (freqs : (int * 'a) list) (i : int) : 'a =
   let (n, a) = List.hd freqs in
@@ -34,6 +40,23 @@ type state = {
     worklist : worklist;
     mutable size : int;
   }
+
+let make_state (size : int) : state =
+  let holes = ref [] in
+  let pop () =
+    if List.length !holes ==0
+    then None
+    else let (hole, holes') = choose_split !holes in
+         holes := holes';
+         Some hole in
+  {
+    size = size;
+    worklist = {
+      pop = pop;
+      add = fun e -> holes := e :: !holes
+    }
+  }
+
 
 exception InternalError of string
 
@@ -110,6 +133,7 @@ exception BadTransition
    E_1{alpha + tau}[lambda_i (x::xs) alpha . E_2{alpha + tau}[x]]
  *)
 let not_useless_rule (params : Exp.params_label list) (prog : Exp.program) (e : Exp.exp_label) =
+  Printf.printf("extending ext. variable\n");
   let node = prog.get_exp e in
   (* TODO: filter params by ty, don't want to cause circularities? *)
   let param = choose params in
@@ -124,6 +148,7 @@ let not_useless_rule (params : Exp.params_label list) (prog : Exp.program) (e : 
    E[<>] ~> E[call <> alpha] where alpha is fresh
  *)
 let create_ext_function_call (prog : Exp.program) (e : Exp.exp_label) =
+  Printf.printf("creating ext. function call\n");
   let node = prog.get_exp e in
   let extvar = prog.new_extvar() in
   let f_ty = prog.new_ty (Exp.TyArrowExt (prog.new_ty_params extvar, node.ty)) in
@@ -136,12 +161,14 @@ let create_ext_function_call (prog : Exp.program) (e : Exp.exp_label) =
    E[<>] ~> E[x]
  *)
 let create_var (vars : (Exp.var * Exp.ty_label) list) (prog : Exp.program) (e : Exp.exp_label) =
+  Printf.printf("creating var reference\n");
   let node = prog.get_exp e in
   prog.set_exp e {exp=Exp.Var (fst (choose vars)); ty=node.ty; prev=node.prev};
   []
 
 (* Implements the rule *)
 let create_if (prog : Exp.program) (e : Exp.exp_label) =
+  Printf.printf("creating if\n");
   let node = prog.get_exp e in
   let pred = prog.new_exp {exp=Exp.Hole; ty=prog.new_ty Exp.TyBool; prev=Some e} in
   let thn = prog.new_exp {exp=Exp.Hole; ty=node.ty; prev=Some e} in
@@ -164,6 +191,7 @@ let create_ext_lambda (prog : Exp.program) e ty_params ty_im =
    E[<>] ~> E[dcon <> ... <>]
  *)
 let create_constructor (prog : Exp.program) (e : Exp.exp_label) =
+  Printf.printf("creating constructor\n");
   let node = prog.get_exp e in
   let (exp, holes) = match (prog.get_ty node.ty) with
     | TyBool -> (Exp.ValBool (choose [false; true]), [])
@@ -189,13 +217,16 @@ let assert_hole (exp : Exp.exp) =
 let generate_exp (size : int) (prog : Exp.program) (e : Exp.exp_label) =
   let node = prog.get_exp e in
   assert_hole node.exp;
+  Printf.printf("finding vars\n");
   let vars = find_vars prog node.prev node.ty in
+  Printf.printf("finding binding locations\n");
   let binds = find_enclosing_lambdas prog node.prev [] in
   let rules = [(List.length vars, create_var vars);
                (1, create_constructor);
                (size / 3, create_if);
                (size / 2, create_ext_function_call);
                (min size (List.length binds), not_useless_rule binds)] in
+  Printf.printf("applying rule\n");
   (choose_frequency rules) prog e
 
 let generate (st : state) (prog : Exp.program) : bool =
@@ -208,9 +239,12 @@ let generate (st : state) (prog : Exp.program) : bool =
     st.size <- if st.size > 0 then st.size - 1 else 0;
     true
 
-let generate_fp (st : state) (prog : Exp.program) : unit =
+let generate_fp (size : int) (ty : Exp.ty) : Exp.program =
+  let prog = Exp.make_program ty in
+  let st = make_state size in
+  st.worklist.add prog.head;
   let rec lp () =
     match generate st prog with
-    | false -> ()
+    | false -> prog
     | true -> lp() in
   lp()

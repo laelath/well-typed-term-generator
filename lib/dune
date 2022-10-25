@@ -1,2 +1,3 @@
 (library
+ (wrapped false)
  (name not_useless))

@@ -149,9 +149,13 @@ let make_program ty =
   let args_extvar_tbl : extvar ArgsLabel.Tbl.t = ArgsLabel.Tbl.create 100 in
 
   let new_var () = Var.make() in
-  let new_extvar () = ExtVar.make () in
+  let new_extvar () =
+    let extvar = ExtVar.make () in
+    ExtVar.Tbl.add extvar_ty_params_tbl extvar [];
+    ExtVar.Tbl.add extvar_params_tbl extvar [];
+    ExtVar.Tbl.add extvar_args_tbl extvar [];
+    extvar in
 
-  (* TODO: actually use the int and bool labels *)
   let new_ty =
     let bool_lab = TypeLabel.make () in
     TypeLabel.Tbl.add ty_tbl bool_lab {ty=TyBool};
@@ -269,9 +273,9 @@ exception ConsistencyError of string
 
 (* check that the prev pointers are correct,
    and that each node points to itself *)
-let consistencyCheck prog =
+let consistency_check prog =
 
-  let rec consistencyCheckTy ty =
+  let rec consistency_check_ty ty =
     match prog.get_ty ty with
     | TyBool -> ()
     | TyInt -> ()
@@ -279,14 +283,14 @@ let consistencyCheck prog =
       let extvar = prog.ty_params_extvar ty_params in
       if not (List.mem ty_params (prog.extvar_ty_params extvar))
       then raise (ConsistencyError "ty_params label not in extvar list")
-      else List.iter consistencyCheckTy (prog.get_ty_params ty_params);
-           consistencyCheckTy ty_im in
+      else List.iter consistency_check_ty (prog.get_ty_params ty_params);
+           consistency_check_ty ty_im in
 
-  let rec consistencyCheckExp prev e =
+  let rec consistency_check_exp prev e =
     let node = prog.get_exp e in
-    if prev != node.prev
+    if prev <> node.prev
     then raise (ConsistencyError "Previous node pointer mismatch")
-    else consistencyCheckTy node.ty;
+    else consistency_check_ty node.ty;
          match node.exp with
          | Hole -> ()
          | Var _ -> ()
@@ -295,26 +299,26 @@ let consistencyCheck prog =
          | ValBool _ -> ()
 
          | Let (_, rhs, body) ->
-           consistencyCheckExp (Some e) rhs;
-           consistencyCheckExp (Some e) body
+           consistency_check_exp (Some e) rhs;
+           consistency_check_exp (Some e) body
 
          | Lambda (params, body) ->
            let extvar = prog.params_extvar params in
            if not (List.mem params (prog.extvar_params extvar))
            then raise (ConsistencyError "params label not in extvar list")
-           else consistencyCheckExp (Some e) body
+           else consistency_check_exp (Some e) body
 
          | Call (func, args) ->
            let extvar = prog.args_extvar args in
            if not (List.mem args (prog.extvar_args extvar))
            then raise (ConsistencyError "args label not in extvar list")
-           else List.iter (consistencyCheckExp (Some e)) (prog.get_args args);
-                consistencyCheckExp (Some e) func
+           else List.iter (consistency_check_exp (Some e)) (prog.get_args args);
+                consistency_check_exp (Some e) func
 
          | If (pred, thn, els) ->
-           consistencyCheckExp (Some e) pred;
-           consistencyCheckExp (Some e) thn;
-           consistencyCheckExp (Some e) els
+           consistency_check_exp (Some e) pred;
+           consistency_check_exp (Some e) thn;
+           consistency_check_exp (Some e) els
 
 (*
          | Data {dcon=_; args=_} -> () (* todo *)
@@ -322,20 +326,20 @@ let consistencyCheck prog =
 *)
     in
   (* check that the argsvars points to params, ty_params, and args *)
-  consistencyCheckExp None prog.head
+  consistency_check_exp None prog.head
 
 exception TypeCheckError of string
 
 (* type check *)
-let typeCheck prog =
+let type_check prog =
   (* TODO: better errors *)
 
-  let ensureSameExtvar ex1 ex2 =
+  let ensure_same_extvar ex1 ex2 =
     if ex1 == ex2
     then ()
     else raise (TypeCheckError "extvar mismatch") in
 
-  let rec ensureSameTy tyl1 tyl2 =
+  let rec ensure_same_ty tyl1 tyl2 =
     if tyl1 == tyl2
     then ()
     else let ty1 = prog.get_ty tyl1 in
@@ -344,19 +348,19 @@ let typeCheck prog =
          | (TyBool, TyBool) -> ()
          | (TyInt, TyInt) -> ()
          | (TyArrowExt (params1, tyb1), TyArrowExt (params2, tyb2)) ->
-           ensureSameExtvar (prog.ty_params_extvar params1) (prog.ty_params_extvar params2);
-           List.iter2 ensureSameTy (prog.get_ty_params params1) (prog.get_ty_params params2);
-           ensureSameTy tyb1 tyb2
+           ensure_same_extvar (prog.ty_params_extvar params1) (prog.ty_params_extvar params2);
+           List.iter2 ensure_same_ty (prog.get_ty_params params1) (prog.get_ty_params params2);
+           ensure_same_ty tyb1 tyb2
          | (_, _) -> raise (TypeCheckError "Type mismatch") in
 
-  let rec typeCheckExp gamma e =
+  let rec type_check_exp gamma e =
     let node = prog.get_exp e in
     match node.exp with
     | Hole -> node.ty
     | Var var ->
       (match lookup gamma var with
        | None -> raise (TypeCheckError "Variable not in scope")
-       | Some ty' -> ensureSameTy node.ty ty'; node.ty)
+       | Some ty' -> ensure_same_ty node.ty ty'; node.ty)
 
     | ValInt _ ->
       if (prog.get_ty node.ty) == TyInt
@@ -369,20 +373,20 @@ let typeCheck prog =
       else raise (TypeCheckError "ValBool doesn't have type TyBool")
 
     | Let (var, rhs, body) ->
-      let rhs_ty = typeCheckExp gamma rhs in
-      let body_ty = typeCheckExp ((var, rhs_ty) :: gamma) body in
-      ensureSameTy node.ty body_ty; node.ty
+      let rhs_ty = type_check_exp gamma rhs in
+      let body_ty = type_check_exp ((var, rhs_ty) :: gamma) body in
+      ensure_same_ty node.ty body_ty; node.ty
 
     (* todo: check and raise custom error when arg names and types
              have different lengths *)
     | Lambda (params, body) ->
       (match (prog.get_ty node.ty) with
        | TyArrowExt (ty_params, ty_im) ->
-         ensureSameExtvar (prog.params_extvar params) (prog.ty_params_extvar ty_params);
+         ensure_same_extvar (prog.params_extvar params) (prog.ty_params_extvar ty_params);
          let vars = prog.get_params params in
          let tys = prog.get_ty_params ty_params in
-         let ty_body = typeCheckExp ((List.combine vars tys) @ gamma) body in
-         ensureSameTy ty_body ty_im; node.ty
+         let ty_body = type_check_exp ((List.combine vars tys) @ gamma) body in
+         ensure_same_ty ty_body ty_im; node.ty
        | _ -> raise (TypeCheckError "lambda exp type not function type"))
 
     | Call (func, args) ->
@@ -390,15 +394,15 @@ let typeCheck prog =
         (match (exps, tys) with
          | ([], []) -> ()
          | (exp :: exps', ty :: tys') ->
-           let ty' = typeCheckExp gamma exp in
-           ensureSameTy ty ty';
+           let ty' = type_check_exp gamma exp in
+           ensure_same_ty ty ty';
            typeCheckArgs exps' tys'
          | _ -> raise (TypeCheckError "number of function call args differs from type")) in
-      let func_ty = typeCheckExp gamma func in
+      let func_ty = type_check_exp gamma func in
       (match (prog.get_ty func_ty) with
        | TyArrowExt (ty_params, ty_im) ->
-         ensureSameExtvar (prog.args_extvar args) (prog.ty_params_extvar ty_params);
-         ensureSameTy node.ty ty_im;
+         ensure_same_extvar (prog.args_extvar args) (prog.ty_params_extvar ty_params);
+         ensure_same_ty node.ty ty_im;
          let exps = prog.get_args args in
          let tys = prog.get_ty_params ty_params in
          typeCheckArgs exps tys;
@@ -406,10 +410,10 @@ let typeCheck prog =
        | _ -> raise (TypeCheckError "callee exp not function type"))
 
     | If (pred, thn, els) ->
-      let typ = prog.get_ty (typeCheckExp gamma pred) in
+      let typ = prog.get_ty (type_check_exp gamma pred) in
       if typ == TyBool
-      then (ensureSameTy node.ty (typeCheckExp gamma thn);
-            ensureSameTy node.ty (typeCheckExp gamma els);
+      then (ensure_same_ty node.ty (type_check_exp gamma thn);
+            ensure_same_ty node.ty (type_check_exp gamma els);
             node.ty)
       else raise (TypeCheckError "if predicate does not have boolean type")
 
@@ -426,13 +430,13 @@ let typeCheck prog =
 *)
   in
   (* throw away the type label *)
-  let _ = typeCheckExp [] prog.head in
+  let _ = type_check_exp [] prog.head in
   ()
 
 (* perform the checks *)
 let check prog = (
-    consistencyCheck prog;
-    typeCheck prog;
+    consistency_check prog;
+    type_check prog;
     ()
   )
 
@@ -477,22 +481,22 @@ let rec string_of_exp prog e =
   | Hole -> "[]"
   | Var var -> Var.to_string var
   | Let (var, rhs, body) ->
-    "let " ^ Var.to_string var
+    "(let " ^ Var.to_string var
     ^ " = " ^ string_of_exp prog rhs
-    ^ " in " ^ string_of_exp prog body
+    ^ " in " ^ string_of_exp prog body ^ ")"
   | Lambda (params, body) ->
-    "λ (" ^ string_of_params params
+    "(λ (" ^ string_of_params params
     ^ " >" ^ ExtVar.to_string (prog.params_extvar params) ^ "). "
-    ^ string_of_exp prog body
+    ^ string_of_exp prog body ^ ")"
   | Call (func, args) ->
     "(" ^ string_of_exp prog func ^ string_of_args args
     ^ " >" ^ ExtVar.to_string (prog.args_extvar args) ^ ")"
   | ValInt i -> Int.to_string i
   | ValBool b -> Bool.to_string b
   | If (pred, thn, els) ->
-    "if " ^ string_of_exp prog pred
+    "(if " ^ string_of_exp prog pred
     ^ " then " ^ string_of_exp prog thn
-    ^ " else " ^ string_of_exp prog els
+    ^ " else " ^ string_of_exp prog els ^ ")"
 (*
 type exp =
   | Lambda of {
