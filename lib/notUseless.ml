@@ -158,6 +158,9 @@ let create_ext_function_call (prog : Exp.program) (e : Exp.exp_label) =
   prog.set_exp e {exp=Exp.Call (f, args); ty=node.ty; prev=node.prev};
   [f]
 
+(* Implements the rule:
+   E[<>] ~> E[call f <> ... alpha] where f is in alpha
+ *)
 let palka_rule (funcs : (Exp.var * Exp.ty_label) list) (prog : Exp.program) (e : Exp.exp_label) =
   Printf.printf("creating palka function call\n");
   let node = prog.get_exp e in
@@ -174,6 +177,39 @@ let palka_rule (funcs : (Exp.var * Exp.ty_label) list) (prog : Exp.program) (e :
     prog.set_exp e {exp=Exp.Call (fe, args); ty=node.ty; prev=node.prev};
     holes
   | _ -> raise (InternalError "variable in function list not a function")
+
+let exp_depth (prog : Exp.program) (e : Exp.exp_label) =
+  let rec exp_depth' e acc =
+    let node = prog.get_exp e in
+    match node.prev with
+    | None -> acc
+    | Some e' -> exp_depth' e' (acc + 1) in
+  exp_depth' e 0
+
+let rec find_pos (height : int) (prog : Exp.program) (e : Exp.exp_label) =
+  if height == 0
+  then e
+  else match (prog.get_exp e).prev with
+       | None -> e
+       | Some e' -> find_pos (height - 1) prog e'
+
+let let_insertion (prog : Exp.program) (e : Exp.exp_label) =
+  Printf.printf("inserting let\n");
+  let ty = (prog.get_exp e).ty in
+  let depth = exp_depth prog e in
+  let e' = find_pos (Random.int (depth + 1)) prog e in
+  let node' = prog.get_exp e' in
+  let x = prog.new_var () in
+  let lt = prog.new_exp {exp=Exp.Hole; ty=node'.ty; prev=node'.prev} in
+  let hole = prog.new_exp {exp=Exp.Hole; ty=ty; prev=Some lt} in
+  prog.set_exp lt {exp=Exp.Let (x, hole, e'); ty=node'.ty; prev=node'.prev};
+  prog.set_exp e' {exp=node'.exp; ty=node'.ty; prev=Some lt};
+  (match node'.prev with
+   | None -> prog.head <- lt
+   | Some e'' -> prog.rename_child (e', lt) e'');
+  let node = prog.get_exp e in
+  prog.set_exp e {exp=Exp.Var x; ty=node.ty; prev=node.prev};
+  [hole]
 
 (* Implements the rule:
    E[<>] ~> E[x]
@@ -248,6 +284,7 @@ let generate_exp (size : int) (prog : Exp.program) (e : Exp.exp_label) =
                (constructor_priority size prog node.ty, create_constructor);
                (size / 3, create_if);
                (size / 2, create_ext_function_call);
+               (size / 2, let_insertion);
                (size * (List.length funcs) * 4, palka_rule funcs);
                (size * (List.length binds), not_useless_rule binds)] in
   (choose_frequency rules) prog e

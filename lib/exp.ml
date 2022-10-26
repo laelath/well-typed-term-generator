@@ -86,7 +86,7 @@ type exp_node = {
 
 type program = {
     (* the head node of the program *)
-    head : exp_label;
+    mutable head : exp_label;
 
     (* variable operations *)
     new_var : unit -> var;
@@ -131,6 +131,8 @@ type program = {
     (* all args labels that are associated with the given extvar *)
     extvar_args : extvar -> args_label list;
     args_extvar : args_label -> extvar;
+
+    rename_child : (exp_label * exp_label) -> exp_label -> unit;
 
   }
 
@@ -226,6 +228,27 @@ let make_program ty =
   let args_extvar lab = ArgsLabel.Tbl.find args_extvar_tbl lab in
   let args_parent lab = ArgsLabel.Tbl.find args_parent_tbl lab in
 
+  (* Justin: I hate this so much *)
+  let rename_child (a, b) e =
+    let rename e' = if e' == a then b else e' in
+
+    let node = get_exp e in
+    match node.exp with
+    | Let (x, rhs, body) ->
+      set_exp e {exp=Let (x, rename rhs, rename body);
+                 ty=node.ty; prev=node.prev}
+    | Lambda (params, body) ->
+      set_exp e {exp=Lambda (params, rename body);
+                 ty=node.ty; prev=node.prev}
+    | Call (func, args) ->
+      ArgsLabel.Tbl.replace args_tbl args (List.map rename (get_args args));
+      set_exp e {exp=Call (rename func, args);
+                 ty=node.ty; prev=node.prev}
+    | If (pred, thn, els) ->
+      set_exp e {exp=If (rename pred, rename thn, rename els);
+                 ty=node.ty; prev=node.prev}
+    | _ -> () in
+
   let head = new_exp {exp=Hole; ty=new_ty ty; prev=None} in
 
   {
@@ -258,6 +281,8 @@ let make_program ty =
     args_parent = args_parent;
     extvar_args = extvar_args;
     args_extvar = args_extvar;
+
+    rename_child = rename_child;
 
   }
 
