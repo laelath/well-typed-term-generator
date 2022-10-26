@@ -330,6 +330,23 @@ let consistency_check prog =
 
 exception TypeCheckError of string
 
+let rec is_same_ty prog tyl1 tyl2 =
+  if tyl1 == tyl2
+  then true
+  else match (prog.get_ty tyl1, prog.get_ty tyl2) with
+       | (TyBool, TyBool) -> true
+       | (TyInt, TyInt) -> true
+       | (TyArrowExt (params1, tyb1), TyArrowExt (params2, tyb2)) ->
+         (prog.ty_params_extvar params1 == prog.ty_params_extvar params2)
+         && List.for_all2 (is_same_ty prog) (prog.get_ty_params params1) (prog.get_ty_params params2)
+         && is_same_ty prog tyb1 tyb2
+       | (_, _) -> false
+
+let is_func_producing prog tylf tyl =
+  match prog.get_ty tylf with
+  | TyArrowExt (_, tyb) -> is_same_ty prog tyl tyb
+  | _ -> false
+
 (* type check *)
 let type_check prog =
   (* TODO: better errors *)
@@ -339,19 +356,10 @@ let type_check prog =
     then ()
     else raise (TypeCheckError "extvar mismatch") in
 
-  let rec ensure_same_ty tyl1 tyl2 =
-    if tyl1 == tyl2
+  let ensure_same_ty tyl1 tyl2 =
+    if is_same_ty prog tyl1 tyl2
     then ()
-    else let ty1 = prog.get_ty tyl1 in
-         let ty2 = prog.get_ty tyl2 in
-         match (ty1, ty2) with
-         | (TyBool, TyBool) -> ()
-         | (TyInt, TyInt) -> ()
-         | (TyArrowExt (params1, tyb1), TyArrowExt (params2, tyb2)) ->
-           ensure_same_extvar (prog.ty_params_extvar params1) (prog.ty_params_extvar params2);
-           List.iter2 ensure_same_ty (prog.get_ty_params params1) (prog.get_ty_params params2);
-           ensure_same_ty tyb1 tyb2
-         | (_, _) -> raise (TypeCheckError "Type mismatch") in
+    else raise (TypeCheckError "Type mismatch") in
 
   let rec type_check_exp gamma e =
     let node = prog.get_exp e in

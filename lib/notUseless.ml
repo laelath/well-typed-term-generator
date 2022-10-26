@@ -10,8 +10,8 @@
  *)
 
 let choose (lst : 'a list) : 'a =
- let i = Random.int (List.length lst) in
- List.nth lst i
+  let i = Random.int (List.length lst) in
+  List.nth lst i
 
 let choose_split (lst : 'a list) : 'a * ('a list) =
   let rec extract i lst =
@@ -88,21 +88,24 @@ let extend_extvar (prog : Exp.program) (extvar : Exp.extvar) (ext_ty : Exp.ty_la
 
   !exp_lbls
 
+(* finds all the variables with the same type,
+   functions that return this type,
+   and TODO: types equivalent up to extvar extensions *)
 let rec find_vars (prog : Exp.program) (e : Exp.exp_label option) (ty : Exp.ty_label) =
   match e with
-  | None -> []
+  | None -> ([], [])
   | Some e ->
     let node = prog.get_exp e in
     match node.exp with
     | Lambda (params, _) ->
-      let vars = find_vars prog node.prev ty in
+      let (vars, funcs) = find_vars prog node.prev ty in
       let ty_params = match prog.get_ty node.ty with
                       | TyArrowExt (ty_params, _) -> ty_params
                       | _ -> raise (InternalError "lambda does not have arrow type") in
       let binds = List.combine (prog.get_params params) (prog.get_ty_params ty_params) in
-      (* TODO: don't use strict type label equality *)
-      let binds' = List.filter (fun b -> snd b == ty) binds in
-      List.append binds' vars
+      let vars' = List.filter (fun b -> Exp.is_same_ty prog (snd b) ty) binds in
+      let funcs' = List.filter (fun b -> Exp.is_func_producing prog (snd b) ty) binds in
+      (List.append vars' vars, List.append funcs' funcs)
     | _ -> find_vars prog node.prev ty
 
 (* takes E[e] and finds all lambdas i such that E_1[lambda_i xs . E_2[e]] *)
@@ -119,8 +122,6 @@ let rec find_enclosing_lambdas (prog : Exp.program) (e : Exp.exp_label option) a
 (*
   TRANSITIONS
  *)
-
-exception BadTransition
 
 (* Implements the rule:
    E_1[lambda_i xs alpha . E_2[<>]] ~>
@@ -156,6 +157,23 @@ let create_ext_function_call (prog : Exp.program) (e : Exp.exp_label) =
   let args = prog.new_args extvar e in
   prog.set_exp e {exp=Exp.Call (f, args); ty=node.ty; prev=node.prev};
   [f]
+
+let palka_rule (funcs : (Exp.var * Exp.ty_label) list) (prog : Exp.program) (e : Exp.exp_label) =
+  Printf.printf("creating palka function call\n");
+  let node = prog.get_exp e in
+  let (f, f_ty) = choose funcs in
+  match (prog.get_ty f_ty) with
+  | Exp.TyArrowExt (ty_params, _) ->
+    let fe = prog.new_exp {exp=Exp.Var f; ty=f_ty; prev=Some e} in
+    let extvar = prog.ty_params_extvar ty_params in
+    let args = prog.new_args extvar e in
+    let holes = List.map (fun arg_ty -> let hole = prog.new_exp {exp=Exp.Hole; ty=arg_ty; prev=Some e} in
+                                        prog.add_arg args hole;
+                                        hole)
+                         (List.rev (prog.get_ty_params ty_params)) in
+    prog.set_exp e {exp=Exp.Call (fe, args); ty=node.ty; prev=node.prev};
+    holes
+  | _ -> raise (InternalError "variable in function list not a function")
 
 (* Implements the rule:
    E[<>] ~> E[x]
@@ -205,6 +223,12 @@ let create_constructor (prog : Exp.program) (e : Exp.exp_label) =
    MAIN LOOP
  *)
 
+let constructor_priority (size : int) (prog : Exp.program) (ty : Exp.ty_label) =
+  match prog.get_ty ty with
+  | Exp.TyBool -> 1
+  | Exp.TyInt -> 1
+  | Exp.TyArrowExt (_, _) -> max 1 (size * 4)
+
 let assert_hole (exp : Exp.exp) =
   match exp with
   | Exp.Hole -> ()
@@ -217,16 +241,15 @@ let assert_hole (exp : Exp.exp) =
 let generate_exp (size : int) (prog : Exp.program) (e : Exp.exp_label) =
   let node = prog.get_exp e in
   assert_hole node.exp;
-  Printf.printf("finding vars\n");
-  let vars = find_vars prog node.prev node.ty in
-  Printf.printf("finding binding locations\n");
+  let vars, funcs = find_vars prog node.prev node.ty in
   let binds = find_enclosing_lambdas prog node.prev [] in
+  Printf.printf ("%i, %i, %i, %i: ") size (List.length vars) (List.length funcs) (List.length binds);
   let rules = [(List.length vars, create_var vars);
-               (1, create_constructor);
+               (constructor_priority size prog node.ty, create_constructor);
                (size / 3, create_if);
                (size / 2, create_ext_function_call);
-               (min size (List.length binds), not_useless_rule binds)] in
-  Printf.printf("applying rule\n");
+               (size * (List.length funcs) * 4, palka_rule funcs);
+               (size * (List.length binds), not_useless_rule binds)] in
   (choose_frequency rules) prog e
 
 let generate (st : state) (prog : Exp.program) : bool =
