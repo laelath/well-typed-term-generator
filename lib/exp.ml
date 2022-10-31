@@ -28,6 +28,8 @@ module DataTy = Key.Make (struct let x="d" end)
 type ty = (* TyArrow of ty_label list * ty_label *)
   | TyInt
   | TyBool
+  | TyList of ty_label
+  | TyArrow of (ty_label list) * ty_label
   | TyArrowExt of ty_params_label * ty_label
   (* | TyVar of ty_var *)
 type ty_node = {ty : ty}
@@ -53,12 +55,15 @@ type exp =
   | Hole
   | Var of var
   | Let of (var * exp_label * exp_label)
-  (* perhaps we want to separate extensible lambdas and calls
-     from non-extensible ones *)
-  | Lambda of (params_label * exp_label)
-  | Call of (exp_label * args_label)
+  | Lambda of ((var list) * exp_label)
+  | Call of (exp_label * (exp_label list))
+  | ExtLambda of (params_label * exp_label)
+  | ExtCall of (exp_label * args_label)
   | ValInt of int
   | ValBool of bool
+  | Cons of (exp_label * exp_label)
+  | Empty
+  | Match of (exp_label * exp_label * (var * var * exp_label))
   | If of (exp_label * exp_label * exp_label)
 (*
   | Data of {
@@ -237,12 +242,12 @@ let make_program ty =
     | Let (x, rhs, body) ->
       set_exp e {exp=Let (x, rename rhs, rename body);
                  ty=node.ty; prev=node.prev}
-    | Lambda (params, body) ->
-      set_exp e {exp=Lambda (params, rename body);
+    | ExtLambda (params, body) ->
+      set_exp e {exp=ExtLambda (params, rename body);
                  ty=node.ty; prev=node.prev}
-    | Call (func, args) ->
+    | ExtCall (func, args) ->
       ArgsLabel.Tbl.replace args_tbl args (List.map rename (get_args args));
-      set_exp e {exp=Call (rename func, args);
+      set_exp e {exp=ExtCall (rename func, args);
                  ty=node.ty; prev=node.prev}
     | If (pred, thn, els) ->
       set_exp e {exp=If (rename pred, rename thn, rename els);
@@ -304,6 +309,10 @@ let consistency_check prog =
     match prog.get_ty ty with
     | TyBool -> ()
     | TyInt -> ()
+    | TyList ty' -> consistency_check_ty ty'
+    | TyArrow (params, ty_im) ->
+      List.iter consistency_check_ty params;
+      consistency_check_ty ty_im
     | TyArrowExt (ty_params, ty_im) ->
       let extvar = prog.ty_params_extvar ty_params in
       if not (List.mem ty_params (prog.extvar_ty_params extvar))
@@ -323,17 +332,33 @@ let consistency_check prog =
          | ValInt _ -> ()
          | ValBool _ -> ()
 
+         | Empty -> ()
+         | Cons (e1, e2) ->
+           consistency_check_exp (Some e) e1;
+           consistency_check_exp (Some e) e2
+         | Match (e1, e2, (_, _, e3)) ->
+           consistency_check_exp (Some e) e1;
+           consistency_check_exp (Some e) e2;
+           consistency_check_exp (Some e) e3
+
          | Let (_, rhs, body) ->
            consistency_check_exp (Some e) rhs;
            consistency_check_exp (Some e) body
 
-         | Lambda (params, body) ->
+         | Lambda (_, body) ->
+           consistency_check_exp (Some e) body
+
+         | Call (func, args) ->
+           List.iter (consistency_check_exp (Some e)) args;
+           consistency_check_exp (Some e) func
+
+         | ExtLambda (params, body) ->
            let extvar = prog.params_extvar params in
            if not (List.mem params (prog.extvar_params extvar))
            then raise (ConsistencyError "params label not in extvar list")
            else consistency_check_exp (Some e) body
 
-         | Call (func, args) ->
+         | ExtCall (func, args) ->
            let extvar = prog.args_extvar args in
            if not (List.mem args (prog.extvar_args extvar))
            then raise (ConsistencyError "args label not in extvar list")
@@ -369,6 +394,7 @@ let rec is_same_ty prog tyl1 tyl2 =
 
 let is_func_producing prog tylf tyl =
   match prog.get_ty tylf with
+  | TyArrow (_, tyb) -> is_same_ty prog tyl tyb
   | TyArrowExt (_, tyb) -> is_same_ty prog tyl tyb
   | _ -> false
 
@@ -387,6 +413,16 @@ let type_check prog =
     else raise (TypeCheckError "Type mismatch") in
 
   let rec type_check_exp gamma e =
+
+    let rec type_check_args exps tys =
+      (match (exps, tys) with
+       | ([], []) -> ()
+       | (exp :: exps', ty :: tys') ->
+         let ty' = type_check_exp gamma exp in
+         ensure_same_ty ty ty';
+         type_check_args exps' tys'
+       | _ -> raise (TypeCheckError "number of function call args differs from type")) in
+
     let node = prog.get_exp e in
     match node.exp with
     | Hole -> node.ty
@@ -400,6 +436,29 @@ let type_check prog =
       then node.ty
       else raise (TypeCheckError "ValInt doesn't have type TyInt")
 
+    | Empty ->
+      (match (prog.get_ty node.ty) with
+       | TyList _ -> node.ty
+       | _ -> raise (TypeCheckError "Empty doesn't have list type"))
+
+    | Cons (e1, e2) ->
+      let ty1 = type_check_exp gamma e1 in
+      let ty2 = type_check_exp gamma e2 in
+      (match prog.get_ty ty2 with
+       | TyList ty2' -> ensure_same_ty ty1 ty2'
+       | _ -> raise (TypeCheckError "Cons doesn't have a list type"));
+      node.ty
+
+    | Match (e1, e2, (x, y, e3)) ->
+      let ty1 = type_check_exp gamma e1 in
+      let ty1' = (match prog.get_ty ty1 with
+                  | TyList ty1' -> ty1'
+                  | _ -> raise (TypeCheckError "Match scrutinee doesn't have list type")) in
+      let ty2 = type_check_exp gamma e2 in
+      let ty3 = type_check_exp ((x, ty1') :: (y, ty1) :: gamma) e3 in
+      ensure_same_ty ty2 ty3;
+      node.ty
+
     | ValBool _ ->
       if (prog.get_ty node.ty) == TyBool
       then node.ty
@@ -410,27 +469,37 @@ let type_check prog =
       let body_ty = type_check_exp ((var, rhs_ty) :: gamma) body in
       ensure_same_ty node.ty body_ty; node.ty
 
+    | Lambda (vars, body) ->
+      (match (prog.get_ty node.ty) with
+       | TyArrow (tys, ty_im) ->
+         let ty_body = type_check_exp ((List.combine vars tys) @ gamma) body in
+         ensure_same_ty ty_body ty_im;
+         node.ty
+       | _ -> raise (TypeCheckError "lambda exp type not (closed) function type"))
+
+    | Call (func, args) ->
+      let func_ty = type_check_exp gamma func in
+      (match (prog.get_ty func_ty) with
+       | TyArrow (tys, ty_im) ->
+         ensure_same_ty node.ty ty_im;
+         type_check_args args tys;
+         node.ty
+       | _ -> raise (TypeCheckError "callee exp not (closed) function type"))
+
     (* todo: check and raise custom error when arg names and types
              have different lengths *)
-    | Lambda (params, body) ->
+    | ExtLambda (params, body) ->
       (match (prog.get_ty node.ty) with
        | TyArrowExt (ty_params, ty_im) ->
          ensure_same_extvar (prog.params_extvar params) (prog.ty_params_extvar ty_params);
          let vars = prog.get_params params in
          let tys = prog.get_ty_params ty_params in
          let ty_body = type_check_exp ((List.combine vars tys) @ gamma) body in
-         ensure_same_ty ty_body ty_im; node.ty
-       | _ -> raise (TypeCheckError "lambda exp type not function type"))
+         ensure_same_ty ty_body ty_im;
+         node.ty
+       | _ -> raise (TypeCheckError "lambda exp type not (ext) function type"))
 
-    | Call (func, args) ->
-      let rec typeCheckArgs exps tys =
-        (match (exps, tys) with
-         | ([], []) -> ()
-         | (exp :: exps', ty :: tys') ->
-           let ty' = type_check_exp gamma exp in
-           ensure_same_ty ty ty';
-           typeCheckArgs exps' tys'
-         | _ -> raise (TypeCheckError "number of function call args differs from type")) in
+    | ExtCall (func, args) ->
       let func_ty = type_check_exp gamma func in
       (match (prog.get_ty func_ty) with
        | TyArrowExt (ty_params, ty_im) ->
@@ -438,9 +507,9 @@ let type_check prog =
          ensure_same_ty node.ty ty_im;
          let exps = prog.get_args args in
          let tys = prog.get_ty_params ty_params in
-         typeCheckArgs exps tys;
+         type_check_args exps tys;
          node.ty
-       | _ -> raise (TypeCheckError "callee exp not function type"))
+       | _ -> raise (TypeCheckError "callee exp not (ext) function type"))
 
     | If (pred, thn, els) ->
       let typ = prog.get_ty (type_check_exp gamma pred) in
@@ -474,6 +543,7 @@ let check prog = (
   )
 
 
+(* TODO: fix this *)
 let rec string_of_ty prog ty =
   let string_of_ty_params ty_params =
     match prog.get_ty_params ty_params with
@@ -487,6 +557,9 @@ let rec string_of_ty prog ty =
   match prog.get_ty ty with
   | TyBool -> "Bool"
   | TyInt -> "Int"
+  | TyList ty' -> "(List " ^ string_of_ty prog ty' ^ ")"
+  | TyArrow (_params, ty_im) ->
+    "todo params " ^ " -> " ^ string_of_ty prog ty_im
   | TyArrowExt (ty_params, ty_im) ->
     string_of_ty_params ty_params ^ " -> " ^ string_of_ty prog ty_im
 
@@ -517,15 +590,27 @@ let rec string_of_exp prog e =
     "(let " ^ Var.to_string var
     ^ " = " ^ string_of_exp prog rhs
     ^ " in " ^ string_of_exp prog body ^ ")"
-  | Lambda (params, body) ->
+  | Lambda (_params, body) ->
+    "(λ (" ^ "todo params" ^ "). "
+    ^ string_of_exp prog body ^ ")"
+  | Call (func, _args) ->
+    "(" ^ string_of_exp prog func ^ " todo args" ^ ")"
+  | ExtLambda (params, body) ->
     "(λ (" ^ string_of_params params
     ^ " >" ^ ExtVar.to_string (prog.params_extvar params) ^ "). "
     ^ string_of_exp prog body ^ ")"
-  | Call (func, args) ->
+  | ExtCall (func, args) ->
     "(" ^ string_of_exp prog func ^ string_of_args args
     ^ " >" ^ ExtVar.to_string (prog.args_extvar args) ^ ")"
   | ValInt i -> Int.to_string i
   | ValBool b -> Bool.to_string b
+  | Empty -> "[]"
+  | Cons (e1, e2) -> "( " ^ string_of_exp prog e1 ^ "::" ^ string_of_exp prog e2 ^ " )"
+  | Match (e1, e2, (x, y, e3)) ->
+    "(match " ^ string_of_exp prog e1 ^ " with"
+    ^ " | [] -> " ^ string_of_exp prog e2
+    ^ " | " ^ Var.to_string x ^ " :: " ^ Var.to_string y
+    ^ " -> " ^ string_of_exp prog e3 ^ ")"
   | If (pred, thn, els) ->
     "(if " ^ string_of_exp prog pred
     ^ " then " ^ string_of_exp prog thn

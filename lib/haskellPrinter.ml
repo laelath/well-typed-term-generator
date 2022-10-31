@@ -1,7 +1,7 @@
 
 exception FoundHole
 
-let print (prog : Exp.program) = 
+let print (prog : Exp.program) =
   let string_of_params params =
     match prog.get_params params with
     | [] -> "\\_ -> "
@@ -27,13 +27,18 @@ let print (prog : Exp.program) =
     | ValBool b -> (match b with
                     | true -> "True"
                     | false -> "False")
+    | Empty -> "[]"
+    | Cons (_ee, _el) -> "" (* TODO *)
+    | Match (_e1, _e2, (_x, _y, _e3)) -> "" (* TODO *)
     | Let (var, rhs, body) ->
        "(let " ^ Exp.Var.to_string var
        ^ " = " ^ string_of_exp rhs
        ^ " in " ^ string_of_exp body ^ ")"
-    | Lambda (params, body) ->
+    | Lambda (_params, _body) -> "" (* TODO *)
+    | Call (_func, _args) -> "" (* TODO *)
+    | ExtLambda (params, body) ->
        "(" ^ string_of_params params ^ string_of_exp body ^ ")"
-    | Call (func, args) ->
+    | ExtCall (func, args) ->
        "(" ^ string_of_exp func ^ string_of_args args ^ ")"
     | If (pred, thn, els) ->
        "(if " ^ string_of_exp pred

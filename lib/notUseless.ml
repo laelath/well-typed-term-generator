@@ -97,7 +97,7 @@ let rec find_vars (prog : Exp.program) (e : Exp.exp_label option) (ty : Exp.ty_l
   | Some e ->
     let node = prog.get_exp e in
     match node.exp with
-    | Lambda (params, _) ->
+    | ExtLambda (params, _) ->
       let (vars, funcs) = find_vars prog node.prev ty in
       let ty_params = match prog.get_ty node.ty with
                       | TyArrowExt (ty_params, _) -> ty_params
@@ -115,7 +115,7 @@ let rec find_enclosing_lambdas (prog : Exp.program) (e : Exp.exp_label option) a
   | Some e ->
     let node = prog.get_exp e in
     match node.exp with
-    | Lambda (params, _) -> find_enclosing_lambdas prog node.prev (params :: acc)
+    | ExtLambda (params, _) -> find_enclosing_lambdas prog node.prev (params :: acc)
     | _ -> find_enclosing_lambdas prog node.prev acc
 
 
@@ -155,26 +155,31 @@ let create_ext_function_call (prog : Exp.program) (e : Exp.exp_label) =
   let f_ty = prog.new_ty (Exp.TyArrowExt (prog.new_ty_params extvar, node.ty)) in
   let f = prog.new_exp {exp=Exp.Hole; ty=f_ty; prev=Some e} in
   let args = prog.new_args extvar e in
-  prog.set_exp e {exp=Exp.Call (f, args); ty=node.ty; prev=node.prev};
+  prog.set_exp e {exp=Exp.ExtCall (f, args); ty=node.ty; prev=node.prev};
   [f]
 
 (* Implements the rule:
    E[<>] ~> E[call f <> ... alpha] where f is in alpha
  *)
 let palka_rule (funcs : (Exp.var * Exp.ty_label) list) (prog : Exp.program) (e : Exp.exp_label) =
-  Printf.printf("creating palka function call\n");
+  Printf.printf("creating ext. palka function call\n");
   let node = prog.get_exp e in
   let (f, f_ty) = choose funcs in
+  let fe = prog.new_exp {exp=Exp.Var f; ty=f_ty; prev=Some e} in
   match (prog.get_ty f_ty) with
   | Exp.TyArrowExt (ty_params, _) ->
-    let fe = prog.new_exp {exp=Exp.Var f; ty=f_ty; prev=Some e} in
     let extvar = prog.ty_params_extvar ty_params in
     let args = prog.new_args extvar e in
-    let holes = List.map (fun arg_ty -> let hole = prog.new_exp {exp=Exp.Hole; ty=arg_ty; prev=Some e} in
-                                        prog.add_arg args hole;
-                                        hole)
+    let holes = List.map (fun arg_ty ->
+                            let hole = prog.new_exp {exp=Exp.Hole; ty=arg_ty; prev=Some e} in
+                            prog.add_arg args hole;
+                            hole)
                          (List.rev (prog.get_ty_params ty_params)) in
-    prog.set_exp e {exp=Exp.Call (fe, args); ty=node.ty; prev=node.prev};
+    prog.set_exp e {exp=Exp.ExtCall (fe, args); ty=node.ty; prev=node.prev};
+    holes
+  | Exp.TyArrow (tys, _) ->
+    let holes = List.map (fun arg_ty -> prog.new_exp {exp=Exp.Hole; ty=arg_ty; prev=Some e}) tys in
+    prog.set_exp e {exp=Exp.Call (fe, holes); ty=node.ty; prev=node.prev};
     holes
   | _ -> raise (InternalError "variable in function list not a function")
 
@@ -231,26 +236,41 @@ let create_if (prog : Exp.program) (e : Exp.exp_label) =
   [pred; thn; els]
 
 (* Implements the rule:
-   E[<>] ~> E[lambda xs alpha . <>]
- *)
-let create_ext_lambda (prog : Exp.program) e ty_params ty_im =
-  let extvar = prog.ty_params_extvar ty_params in
-  let params = prog.new_params extvar in
-  let xs = List.map (fun _ -> prog.new_var()) (prog.get_ty_params ty_params) in
-  List.iter (prog.add_param params) xs;
-  let body = prog.new_exp {exp=Exp.Hole; ty=ty_im; prev=Some e} in
-  (Exp.Lambda (params, body), [body])
-
-(* Implements the rule:
    E[<>] ~> E[dcon <> ... <>]
  *)
-let create_constructor (prog : Exp.program) (e : Exp.exp_label) =
+let create_constructor (size : int) (prog : Exp.program) (e : Exp.exp_label) =
   Printf.printf("creating constructor\n");
   let node = prog.get_exp e in
+
+  let create_lambda params ty_im =
+    let xs = List.map (fun _ -> prog.new_var()) params in
+    let body = prog.new_exp {exp=Exp.Hole; ty=ty_im; prev=Some e} in
+    (Exp.Lambda (xs, body), [body])
+  in
+
+  let create_ext_lambda ty_params ty_im =
+    let extvar = prog.ty_params_extvar ty_params in
+    let params = prog.new_params extvar in
+    let xs = List.map (fun _ -> prog.new_var()) (prog.get_ty_params ty_params) in
+    List.iter (prog.add_param params) xs;
+    let body = prog.new_exp {exp=Exp.Hole; ty=ty_im; prev=Some e} in
+    (Exp.ExtLambda (params, body), [body])
+  in
+
+  let create_list ty' =
+    if size == 0
+    then (Exp.Empty, [])
+    else let lhole = prog.new_exp {exp=Exp.Hole; ty=node.ty; prev=Some e} in
+         let ehole = prog.new_exp {exp=Exp.Hole; ty=ty'; prev=Some e} in
+         (Exp.Cons (ehole, lhole), [ehole; lhole])
+  in
+
   let (exp, holes) = match (prog.get_ty node.ty) with
     | TyBool -> (Exp.ValBool (choose [false; true]), [])
     | TyInt -> (Exp.ValInt 0, [])
-    | TyArrowExt (ty_params, ty_im) -> create_ext_lambda prog e ty_params ty_im in
+    | TyList ty' -> create_list ty'
+    | TyArrow (params, ty_im) -> create_lambda params ty_im
+    | TyArrowExt (ty_params, ty_im) -> create_ext_lambda ty_params ty_im in
   prog.set_exp e {exp=exp; ty=node.ty; prev=node.prev};
   holes
 
@@ -263,6 +283,8 @@ let constructor_priority (size : int) (prog : Exp.program) (ty : Exp.ty_label) =
   match prog.get_ty ty with
   | Exp.TyBool -> 1
   | Exp.TyInt -> 1
+  | Exp.TyList _ -> max 1 size
+  | Exp.TyArrow (_, _) -> max 1 size
   | Exp.TyArrowExt (_, _) -> max 1 (size * 4)
 
 let assert_hole (exp : Exp.exp) =
@@ -281,7 +303,7 @@ let generate_exp (size : int) (prog : Exp.program) (e : Exp.exp_label) =
   let binds = find_enclosing_lambdas prog node.prev [] in
   Printf.printf ("%i, %i, %i, %i: ") size (List.length vars) (List.length funcs) (List.length binds);
   let rules = [(List.length vars, create_var vars);
-               (constructor_priority size prog node.ty, create_constructor);
+               (constructor_priority size prog node.ty, (create_constructor size));
                (size / 3, create_if);
                (size / 2, create_ext_function_call);
                (size / 2, let_insertion);
