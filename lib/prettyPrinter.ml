@@ -38,21 +38,36 @@ let pretty_print (prog : Exp.program) : unit =
       let body = "\n"::(tab tab_i1)::(print_e body (tab_i+1) acc) in
       let lambda = "λ "::"("::(print_bnds params tab_i (")"::body)) in
       lambda
-    | Call (_func, _args) -> acc (* TODO *)
+    | Call (func, args) -> 
+      let print_es = print_lst print_e ["\n";tab tab_i1] in
+      let args = "\n"::(tab tab_i1)::(print_es args tab_i1 acc) in
+      "call"::"\n"::(tab tab_i1)::(print_e func tab_i1 args)
     | ExtLambda (params, body) ->
-      let print_bnds = print_lst print_bnd [] in
-      let body = "\n"::(tab tab_i1)::(print_e body (tab_i+1) acc) in
-      let lambda = "λ "::"("::(print_bnds (prog.get_params params) tab_i (")"::body)) in
+       let extvar = Exp.ExtVar.to_string (prog.params_extvar params) in
+       let print_bnds = print_lst print_bnd [] in
+       let body = "\n"::(tab tab_i1)::(print_e body (tab_i+1) acc) in
+       let lambda = "λ> "::"("::(print_bnds (prog.get_params params) tab_i (extvar::")"::body)) in
       lambda
     | ExtCall (func, args) ->
-      let print_es = print_lst print_e ["\n";tab tab_i1] in
-      let args = "\n"::(tab tab_i1)::(print_es (prog.get_args args) tab_i1 acc) in
-      "call"::"\n"::(tab tab_i1)::(print_e func tab_i1 args)
+       let extvar = Exp.ExtVar.to_string (prog.args_extvar args) in
+       let print_es = print_lst print_e ["\n";tab tab_i1] in
+       let args = "\n"::(tab tab_i1)::(print_es (prog.get_args args) tab_i1 acc) in
+       "call> "::extvar::"\n"::(tab tab_i1)::(print_e func tab_i1 args)
     | ValInt i -> (Int.to_string i) :: acc
     | ValBool b -> (Bool.to_string b) :: acc
     | Empty -> "[]" :: acc
-    | Cons (_ee, _el) -> acc (* TODO *)
-    | Match (_e1, _e2, (_x, _y, _e3)) -> acc (* TODO *)
+    | Cons (fst, rst) -> 
+       let rst = "\n"::(tab tab_i1)::(print_e rst tab_i1 acc) in
+       let fst = "\n"::(tab tab_i1)::(print_e fst tab_i1 rst) in
+       "cons"::fst
+    | Match (value, nil_case, (x_fst, x_rst, cons_case)) ->
+       let cons_case = "\n"::(tab tab_i)::"| "::(Exp.Var.to_string x_fst)::":"::(Exp.Var.to_string x_rst)::" -> "::
+                         "\n"::(tab tab_i1)::(print_e cons_case tab_i1 acc) in
+       let nil_case = "\n"::(tab tab_i)::"| "::"[]"::" -> "::
+                        "\n"::(tab tab_i1)::(print_e nil_case tab_i1 cons_case) in
+       let body = "\n"::(tab tab_i)::"with"::nil_case in
+       let value = "\n"::(tab tab_i1)::(print_e value tab_i1 body) in
+       "match"::value
     | If (pred, thn, els) ->
       let els = "\n"::(tab tab_i)::"else "
                 ::"\n"::(tab tab_i1)::(print_e els tab_i1 acc) in

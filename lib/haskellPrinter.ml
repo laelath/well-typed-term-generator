@@ -2,47 +2,52 @@
 exception FoundHole
 
 let print (prog : Exp.program) =
-  let string_of_params params =
-    match prog.get_params params with
+  let str_var = Exp.Var.to_string in
+
+  let str_params params =
+    match params with
     | [] -> "\\_ -> "
     | x :: xs ->
-       String.concat "" (List.map (fun var -> "\\" ^ Exp.Var.to_string var ^ " -> ") (x :: xs))
+       String.concat "" (List.map (fun var -> "\\" ^ (str_var var) ^ " -> ") (x :: xs))
   in
 
-  let rec string_of_exp e =
-  (* let string_of_type ty = raise *)
+  let rec str_exp e =
+  (* let str_type ty = raise *)
 
-    let string_of_args args =
-      match prog.get_args args with
+    let str_args args =
+      match args with
       | [] -> " ()"
       | arg :: args ->
-         String.concat " " (List.map (fun arg -> " " ^ (string_of_exp arg)) (arg :: args))
+         String.concat " " (List.map (fun arg -> " " ^ (str_exp arg)) (arg :: args))
     in
 
     let node = prog.get_exp e in
     match node.exp with
     | Hole -> raise FoundHole
-    | Var var -> Exp.Var.to_string var
+    | Var var -> str_var var
     | ValInt i -> Int.to_string i
     | ValBool b -> (match b with
                     | true -> "True"
                     | false -> "False")
     | Empty -> "[]"
-    | Cons (_ee, _el) -> "" (* TODO *)
-    | Match (_e1, _e2, (_x, _y, _e3)) -> "" (* TODO *)
+    | Cons (fst, rst) -> (str_exp fst) ^ " : " ^ (str_exp rst)
+    | Match (value, nil_case, (x_fst, x_rst, cons_case)) ->
+       "(case " ^ (str_exp value) ^ " of [] -> " ^ (str_exp nil_case) ^ " " ^ (str_var x_fst) ^ ":" ^ (str_var x_rst) ^ " -> " ^ (str_exp cons_case) ^ ")"
     | Let (var, rhs, body) ->
-       "(let " ^ Exp.Var.to_string var
-       ^ " = " ^ string_of_exp rhs
-       ^ " in " ^ string_of_exp body ^ ")"
-    | Lambda (_params, _body) -> "" (* TODO *)
-    | Call (_func, _args) -> "" (* TODO *)
+       "(let " ^ str_var var
+       ^ " = " ^ str_exp rhs
+       ^ " in " ^ str_exp body ^ ")"
+    | Lambda (params, body) -> 
+       "(" ^ str_params params ^ str_exp body ^ ")"
+    | Call (func, args) -> 
+       "(" ^ str_exp func ^ str_args args ^ ")"
     | ExtLambda (params, body) ->
-       "(" ^ string_of_params params ^ string_of_exp body ^ ")"
+       "(" ^ str_params (prog.get_params params) ^ str_exp body ^ ")"
     | ExtCall (func, args) ->
-       "(" ^ string_of_exp func ^ string_of_args args ^ ")"
+       "(" ^ str_exp func ^ str_args (prog.get_args args) ^ ")"
     | If (pred, thn, els) ->
-       "(if " ^ string_of_exp pred
-       ^ " then " ^ string_of_exp thn
-       ^ " else " ^ string_of_exp els ^ ")" in
-  print_string (string_of_exp prog.head);
+       "(if " ^ str_exp pred
+       ^ " then " ^ str_exp thn
+       ^ " else " ^ str_exp els ^ ")" in
+  print_string (str_exp prog.head);
   print_string("\n")
