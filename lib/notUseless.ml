@@ -107,16 +107,16 @@ let find_vars (prog : Exp.program) (e : Exp.exp_label) (ty : Exp.ty_label) =
            if (e == body)
            then let lst_ty = (prog.get_exp scr).ty in
                 match prog.get_ty lst_ty with
-                | TyList ty' -> [(fst, ty'); (rst, lst_ty)]
+                | TyNdList ty' -> [(fst, ty'); (rst, lst_ty)]
                 | _ -> raise (InternalError "match scrutinee does not have list type")
            else []
          | Lambda (params, _) ->
            (match prog.get_ty node.ty with
-            | TyArrow (ty_params, _) -> List.combine params ty_params
+            | TyNdArrow (ty_params, _) -> List.combine params ty_params
             | _ -> raise (InternalError "lambda does not have arrow type"))
          | ExtLambda (params, _) ->
            (match prog.get_ty node.ty with
-            | TyArrowExt (ty_params, _) -> List.combine (prog.get_params params) (prog.get_ty_params ty_params)
+            | TyNdArrowExt (ty_params, _) -> List.combine (prog.get_params params) (prog.get_ty_params ty_params)
             | _ -> raise (InternalError "lambda does not have arrow type"))
          | _ -> [])
         (find_binds ep) in
@@ -170,7 +170,7 @@ let create_ext_function_call (prog : Exp.program) (e : Exp.exp_label) =
   Printf.printf("creating ext. function call\n");
   let node = prog.get_exp e in
   let extvar = prog.new_extvar() in
-  let f_ty = prog.new_ty (Exp.TyArrowExt (prog.new_ty_params extvar, node.ty)) in
+  let f_ty = prog.new_ty (Exp.TyNdArrowExt (prog.new_ty_params extvar, node.ty)) in
   let f = prog.new_exp {exp=Exp.Hole; ty=f_ty; prev=Some e} in
   let args = prog.new_args extvar e in
   prog.set_exp e {exp=Exp.ExtCall (f, args); ty=node.ty; prev=node.prev};
@@ -185,7 +185,7 @@ let palka_rule (funcs : (Exp.var * Exp.ty_label) list) (prog : Exp.program) (e :
   let (f, f_ty) = choose funcs in
   let fe = prog.new_exp {exp=Exp.Var f; ty=f_ty; prev=Some e} in
   match (prog.get_ty f_ty) with
-  | Exp.TyArrowExt (ty_params, _) ->
+  | Exp.TyNdArrowExt (ty_params, _) ->
     let extvar = prog.ty_params_extvar ty_params in
     let args = prog.new_args extvar e in
     let holes = List.map (fun arg_ty ->
@@ -195,7 +195,7 @@ let palka_rule (funcs : (Exp.var * Exp.ty_label) list) (prog : Exp.program) (e :
                          (List.rev (prog.get_ty_params ty_params)) in
     prog.set_exp e {exp=Exp.ExtCall (fe, args); ty=node.ty; prev=node.prev};
     holes
-  | Exp.TyArrow (tys, _) ->
+  | Exp.TyNdArrow (tys, _) ->
     let holes = List.map (fun arg_ty -> prog.new_exp {exp=Exp.Hole; ty=arg_ty; prev=Some e}) tys in
     prog.set_exp e {exp=Exp.Call (fe, holes); ty=node.ty; prev=node.prev};
     holes
@@ -234,7 +234,6 @@ let let_insertion (prog : Exp.program) (e : Exp.exp_label) =
   prog.set_exp e {exp=Exp.Var x; ty=node.ty; prev=node.prev};
   [hole]
 
-(* TODO: insertion based on rst variable *)
 let match_insertion (prog : Exp.program) (e : Exp.exp_label) =
   Printf.printf("inserting match\n");
   let ty = (prog.get_exp e).ty in
@@ -244,8 +243,8 @@ let match_insertion (prog : Exp.program) (e : Exp.exp_label) =
   let e_match = prog.new_exp {exp=Exp.Hole; ty=node'.ty; prev=node'.prev} in
   let hole_nil = prog.new_exp {exp=Exp.Hole; ty=node'.ty; prev=Some e_match} in
   let list_ty = match (prog.get_ty ty, choose [true; false]) with
-                | TyList _, true -> Either.Left ty
-                | _ -> Either.Right (prog.new_ty (Exp.TyList ty)) in
+                | TyNdList _, true -> Either.Left ty
+                | _ -> Either.Right (prog.new_ty (Exp.TyNdList ty)) in
   let hole_scr = prog.new_exp {exp=Exp.Hole; ty=(match list_ty with | Left ty' -> ty' | Right ty' -> ty'); prev=Some e_match} in
   let x = prog.new_var () in
   let y = prog.new_var () in
@@ -271,7 +270,7 @@ let create_var (vars : (Exp.var * Exp.ty_label) list) (prog : Exp.program) (e : 
 let create_if (prog : Exp.program) (e : Exp.exp_label) =
   Printf.printf("creating if\n");
   let node = prog.get_exp e in
-  let pred = prog.new_exp {exp=Exp.Hole; ty=prog.new_ty Exp.TyBool; prev=Some e} in
+  let pred = prog.new_exp {exp=Exp.Hole; ty=prog.new_ty Exp.TyNdBool; prev=Some e} in
   let thn = prog.new_exp {exp=Exp.Hole; ty=node.ty; prev=Some e} in
   let els = prog.new_exp {exp=Exp.Hole; ty=node.ty; prev=Some e} in
   prog.set_exp e {exp=Exp.If (pred, thn, els); ty=node.ty; prev=node.prev};
@@ -310,11 +309,11 @@ let create_constructor (size : int) (prog : Exp.program) (e : Exp.exp_label) =
   in
 
   let (exp, holes) = match (prog.get_ty node.ty) with
-    | TyBool -> (Exp.ValBool (choose [false; true]), [])
-    | TyInt -> (Exp.ValInt 0, [])
-    | TyList ty' -> create_list ty'
-    | TyArrow (params, ty_im) -> create_lambda params ty_im
-    | TyArrowExt (ty_params, ty_im) -> create_ext_lambda ty_params ty_im in
+    | TyNdBool -> (Exp.ValBool (choose [false; true]), [])
+    | TyNdInt -> (Exp.ValInt (Random.int 10), [])
+    | TyNdList ty' -> create_list ty'
+    | TyNdArrow (params, ty_im) -> create_lambda params ty_im
+    | TyNdArrowExt (ty_params, ty_im) -> create_ext_lambda ty_params ty_im in
   prog.set_exp e {exp=exp; ty=node.ty; prev=node.prev};
   holes
 
@@ -325,11 +324,11 @@ let create_constructor (size : int) (prog : Exp.program) (e : Exp.exp_label) =
 
 let constructor_priority (size : int) (prog : Exp.program) (ty : Exp.ty_label) =
   match prog.get_ty ty with
-  | Exp.TyBool -> 1
-  | Exp.TyInt -> 1
-  | Exp.TyList _ -> 1 + size
-  | Exp.TyArrow (_, _) -> 1 + size
-  | Exp.TyArrowExt (_, _) -> 1 + (size * 4)
+  | Exp.TyNdBool -> 1
+  | Exp.TyNdInt -> 1
+  | Exp.TyNdList _ -> 1 + size
+  | Exp.TyNdArrow (_, _) -> 1 + size
+  | Exp.TyNdArrowExt (_, _) -> 1 + (size * 4)
 
 let assert_hole (exp : Exp.exp) =
   match exp with
