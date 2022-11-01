@@ -205,16 +205,38 @@ let let_insertion (prog : Exp.program) (e : Exp.exp_label) =
   let e' = find_pos (Random.int (depth + 1)) prog e in
   let node' = prog.get_exp e' in
   let x = prog.new_var () in
-  let lt = prog.new_exp {exp=Exp.Hole; ty=node'.ty; prev=node'.prev} in
-  let hole = prog.new_exp {exp=Exp.Hole; ty=ty; prev=Some lt} in
-  prog.set_exp lt {exp=Exp.Let (x, hole, e'); ty=node'.ty; prev=node'.prev};
-  prog.set_exp e' {exp=node'.exp; ty=node'.ty; prev=Some lt};
+  let e_let = prog.new_exp {exp=Exp.Hole; ty=node'.ty; prev=node'.prev} in
+  let hole = prog.new_exp {exp=Exp.Hole; ty=ty; prev=Some e_let} in
+  prog.set_exp e_let {exp=Exp.Let (x, hole, e'); ty=node'.ty; prev=node'.prev};
+  prog.set_exp e' {exp=node'.exp; ty=node'.ty; prev=Some e_let};
   (match node'.prev with
-   | None -> prog.head <- lt
-   | Some e'' -> prog.rename_child (e', lt) e'');
+   | None -> prog.head <- e_let
+   | Some e'' -> prog.rename_child (e', e_let) e'');
   let node = prog.get_exp e in
   prog.set_exp e {exp=Exp.Var x; ty=node.ty; prev=node.prev};
   [hole]
+
+(* TODO: insertion based on rst variable *)
+let match_insertion (prog : Exp.program) (e : Exp.exp_label) =
+  Printf.printf("inserting match\n");
+  let ty = (prog.get_exp e).ty in
+  let depth = exp_depth prog e in
+  let e' = find_pos (Random.int (depth + 1)) prog e in
+  let node' = prog.get_exp e' in
+  let e_match = prog.new_exp {exp=Exp.Hole; ty=node'.ty; prev=node'.prev} in
+  let hole_nil = prog.new_exp {exp=Exp.Hole; ty=node'.ty; prev=Some e_match} in
+  let list_ty = prog.new_ty (Exp.TyList ty) in
+  let hole_scr = prog.new_exp {exp=Exp.Hole; ty=list_ty; prev=Some e_match} in
+  let x = prog.new_var () in
+  let y = prog.new_var () in
+  prog.set_exp e_match {exp=Exp.Match (hole_scr, hole_nil, (x, y, e')); ty=node'.ty; prev=node'.prev};
+  prog.set_exp e' {exp=node'.exp; ty=node'.ty; prev=Some e_match};
+  (match node'.prev with
+   | None -> prog.head <- e_match
+   | Some e'' -> prog.rename_child (e', e_match) e'');
+  let node = prog.get_exp e in
+  prog.set_exp e {exp=Exp.Var x; ty=node.ty; prev=node.prev};
+  [hole_scr; hole_nil]
 
 (* Implements the rule:
    E[<>] ~> E[x]
@@ -258,11 +280,13 @@ let create_constructor (size : int) (prog : Exp.program) (e : Exp.exp_label) =
   in
 
   let create_list ty' =
-    if size == 0
-    then (Exp.Empty, [])
-    else let lhole = prog.new_exp {exp=Exp.Hole; ty=node.ty; prev=Some e} in
-         let ehole = prog.new_exp {exp=Exp.Hole; ty=ty'; prev=Some e} in
-         (Exp.Cons (ehole, lhole), [ehole; lhole])
+    choose_frequency
+      [(1, (fun () -> (Exp.Empty, [])));
+       (1 + size, (fun () ->
+                   let lhole = prog.new_exp {exp=Exp.Hole; ty=node.ty; prev=Some e} in
+                   let ehole = prog.new_exp {exp=Exp.Hole; ty=ty'; prev=Some e} in
+                   (Exp.Cons (ehole, lhole), [ehole; lhole])))]
+      ()
   in
 
   let (exp, holes) = match (prog.get_ty node.ty) with
@@ -283,9 +307,9 @@ let constructor_priority (size : int) (prog : Exp.program) (ty : Exp.ty_label) =
   match prog.get_ty ty with
   | Exp.TyBool -> 1
   | Exp.TyInt -> 1
-  | Exp.TyList _ -> max 1 size
-  | Exp.TyArrow (_, _) -> max 1 size
-  | Exp.TyArrowExt (_, _) -> max 1 (size * 4)
+  | Exp.TyList _ -> 1 + size
+  | Exp.TyArrow (_, _) -> 1 + size
+  | Exp.TyArrowExt (_, _) -> 1 + (size * 4)
 
 let assert_hole (exp : Exp.exp) =
   match exp with
@@ -307,6 +331,7 @@ let generate_exp (size : int) (prog : Exp.program) (e : Exp.exp_label) =
                (size / 3, create_if);
                (size / 2, create_ext_function_call);
                (size / 2, let_insertion);
+               (size / 3, match_insertion);
                (size * (List.length funcs) * 4, palka_rule funcs);
                (size * (List.length binds), not_useless_rule binds)] in
   (choose_frequency rules) prog e

@@ -242,6 +242,12 @@ let make_program ty =
     | Let (x, rhs, body) ->
       set_exp e {exp=Let (x, rename rhs, rename body);
                  ty=node.ty; prev=node.prev}
+    | Lambda (params, body) ->
+      set_exp e {exp=Lambda (params, rename body);
+                 ty=node.ty; prev=node.prev}
+    | Call (func, args) ->
+      set_exp e {exp=Call (rename func, (List.map rename args));
+                 ty=node.ty; prev=node.prev}
     | ExtLambda (params, body) ->
       set_exp e {exp=ExtLambda (params, rename body);
                  ty=node.ty; prev=node.prev}
@@ -251,6 +257,12 @@ let make_program ty =
                  ty=node.ty; prev=node.prev}
     | If (pred, thn, els) ->
       set_exp e {exp=If (rename pred, rename thn, rename els);
+                 ty=node.ty; prev=node.prev}
+    | Cons (fst, rst) ->
+      set_exp e {exp=Cons (rename fst, rename rst);
+                 ty=node.ty; prev=node.prev}
+    | Match (scr, nil, (fst, rst, cons)) ->
+      set_exp e {exp=Match (rename scr, rename nil, (fst, rst, rename cons));
                  ty=node.ty; prev=node.prev}
     | _ -> () in
 
@@ -577,7 +589,7 @@ let rec string_of_exp prog e =
 
   let string_of_args args =
     List.fold_left
-      (fun acc e -> " (" ^ string_of_exp prog e ^ ")" ^ acc)
+      (fun acc e -> " " ^ string_of_exp prog e ^ acc)
       ""
       (prog.get_args args)
   in
@@ -605,7 +617,7 @@ let rec string_of_exp prog e =
   | ValInt i -> Int.to_string i
   | ValBool b -> Bool.to_string b
   | Empty -> "[]"
-  | Cons (e1, e2) -> "( " ^ string_of_exp prog e1 ^ "::" ^ string_of_exp prog e2 ^ " )"
+  | Cons (e1, e2) -> "(" ^ string_of_exp prog e1 ^ " :: " ^ string_of_exp prog e2 ^ ")"
   | Match (e1, e2, (x, y, e3)) ->
     "(match " ^ string_of_exp prog e1 ^ " with"
     ^ " | [] -> " ^ string_of_exp prog e2
