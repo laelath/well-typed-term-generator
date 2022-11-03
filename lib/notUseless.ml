@@ -25,7 +25,7 @@ let rec get_freq (freqs : (int * 'a) list) (i : int) : 'a =
   let (n, a) = List.hd freqs in
   if i < n
   then a
-  else get_freq (List.tl freqs) (i-n)
+  else get_freq (List.tl freqs) (i - n)
 
 let choose_frequency (freqs : (int * 'a) list) : 'a =
   let n = List.fold_left (fun acc (m, _) -> acc + m) 0 freqs in
@@ -44,7 +44,7 @@ type state = {
 let make_state (size : int) : state =
   let holes = ref [] in
   let pop () =
-    if List.length !holes ==0
+    if List.length !holes == 0
     then None
     else let (hole, holes') = choose_split !holes in
          holes := holes';
@@ -320,51 +320,64 @@ let create_constructor (size : int) (prog : Exp.program) (e : Exp.exp_label) =
 (* std_lib objects specify an occurence amount,
    objects are filtered so they can be selected 1/n of the time they are valid choices *)
 let find_std_lib_refs prog tyl =
-  List.map fst
-    (List.filter (fun (_, (ty, n)) ->
-                    Random.int n == 0
-                    && Option.is_some (Exp.ty_compat_ty_label prog ty tyl []))
-                 prog.std_lib)
+  List.filter_map
+    (fun (x, (ty, n)) ->
+       if Random.int n <> 0
+       then None
+       else Option.map (fun _ -> x) (Exp.ty_compat_ty_label prog ty tyl []))
+    prog.std_lib
 
 let create_std_lib_ref choices (prog : Exp.program) (e : Exp.exp_label) =
-  Printf.printf("creating std lib reference\n");
   let node = prog.get_exp e in
-  prog.set_exp e {exp=Exp.StdLibRef (choose choices); ty=node.ty; prev=node.prev};
+  let x = choose choices in
+  Printf.printf("creating std lib reference: %s\n") x;
+  prog.set_exp e {exp=Exp.StdLibRef x; ty=node.ty; prev=node.prev};
   []
 
 let find_std_lib_funcs prog tyl =
-  List.flatten
-    (List.map
-       (fun (x, (ty, n)) ->
-          if Random.int n <> 0
-          then []
-          else match ty with
-               | Exp.TyArrow (tys, ty') ->
-                 (match Exp.ty_compat_ty_label prog ty' tyl [] with
-                  | None -> []
-                  | Some mp -> [(x, tys, mp)])
-               | _ -> [])
-       prog.std_lib)
+  List.filter_map
+    (fun (x, (ty, n)) ->
+       if Random.int n <> 0
+       then None
+       else match ty with
+            | Exp.TyArrow (tys, ty') ->
+              (match Exp.ty_compat_ty_label prog ty' tyl [] with
+               | None -> None
+               | Some mp -> Some (x, tys, mp))
+            | _ -> None)
+    prog.std_lib
+
+let rec generate_type size (prog : Exp.program) =
+  prog.new_ty
+    ((choose_frequency
+        [(1, (fun _ -> Exp.TyNdBool)); (1, (fun _ -> Exp.TyNdInt));
+         (size, (fun _ -> Exp.TyNdList (generate_type (size - 1) prog)))])
+     ())
 
 let palka_rule_std_lib choices (prog : Exp.program) (e : Exp.exp_label) =
-  Printf.printf("creating std lib palka call\n");
   let node = prog.get_exp e in
   let f, tys, mp = choose choices in
+  Printf.printf("creating std lib palka call: %s\n") f;
 
-  let rec ty_label_from_ty ty =
+  let rec ty_label_from_ty mp ty =
     match ty with
     | Exp.TyVar var ->
       (match List.assoc_opt var mp with
-       | None -> raise (InternalError "Need to generate a type")
-       | Some tyl -> tyl)
-    | Exp.TyInt -> prog.new_ty Exp.TyNdInt
-    | Exp.TyBool -> prog.new_ty Exp.TyNdBool
-    | Exp.TyList ty' -> prog.new_ty (Exp.TyNdList (ty_label_from_ty ty'))
+       | None -> let tyl = generate_type 3 prog in
+                 ((var, tyl) :: mp, tyl)
+       | Some tyl -> (mp, tyl))
+    | Exp.TyInt -> (mp, prog.new_ty Exp.TyNdInt)
+    | Exp.TyBool -> (mp, prog.new_ty Exp.TyNdBool)
+    | Exp.TyList ty' ->
+      let (mp, tyl') = ty_label_from_ty mp ty' in
+      (mp, prog.new_ty (Exp.TyNdList tyl'))
     | Exp.TyArrow (tys, ty') ->
-      prog.new_ty (Exp.TyNdArrow (List.map ty_label_from_ty tys, ty_label_from_ty ty'))
+      let (mp, tyl') = ty_label_from_ty mp ty' in
+      let (mp, tys') = List.fold_left_map ty_label_from_ty mp (List.rev tys) in
+      (mp, prog.new_ty (Exp.TyNdArrow (tys', tyl')))
   in
 
-  let tyls = List.map ty_label_from_ty tys in
+  let (_, tyls) = List.fold_left_map ty_label_from_ty mp (List.rev tys) in
   let holes = List.map (fun tyl -> prog.new_exp {exp=Exp.Hole; ty=tyl; prev=Some e}) tyls in
   let func = prog.new_exp {exp=Exp.StdLibRef f; ty=prog.new_ty (Exp.TyNdArrow (tyls, node.ty)); prev=Some e} in
   prog.set_exp e {exp=Exp.Call (func, holes); ty=node.ty; prev=node.prev};
@@ -435,6 +448,10 @@ let generate_fp ?(std_lib = []) (size : int) (ty : Exp.ty) : Exp.program =
 
 let haskell_std_lib =
   [("undefined", (Exp.TyVar "a", 10));
+   ("seq", (Exp.TyArrow ([(Exp.TyVar "b"); (Exp.TyVar "a")], (Exp.TyVar "a")), 1));
    ("append", (Exp.TyArrow ([(Exp.TyList (Exp.TyVar "a")); (Exp.TyList (Exp.TyVar "a"))],
                             (Exp.TyList (Exp.TyVar "a"))),
                1))]
+
+let generate_palka size =
+  generate_fp ~std_lib:haskell_std_lib size (Exp.TyArrow ([Exp.TyList Exp.TyInt], (Exp.TyList Exp.TyInt)))

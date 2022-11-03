@@ -284,7 +284,7 @@ let make_program ?(std_lib = []) ty =
        | TyInt -> TyNdInt
        | TyBool -> TyNdBool
        | TyList ty'' -> TyNdList (ty_to_ty_label ty'')
-       | TyArrow (params, res) -> TyNdArrow (List.map ty_to_ty_label params, ty_to_ty_label res)
+       | TyArrow (params, res) -> TyNdArrow (List.rev_map ty_to_ty_label params, ty_to_ty_label res)
        | TyVar _ -> raise (BadTypeError "Cannot generate polymorphic types"))
   in
 
@@ -464,7 +464,7 @@ let rec ty_compat_ty_label prog (ty : ty) (tyl : ty_label) acc =
            (fun acc ty tyl ->
               Option.bind acc (ty_compat_ty_label prog ty tyl))
            (ty_compat_ty_label prog ty' tyl' acc)
-           tys tyls
+           (List.rev tys) tyls
     else None
   | _ -> None
 
