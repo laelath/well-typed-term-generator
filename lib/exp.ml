@@ -40,6 +40,7 @@ type ty =
   | TyBool
   | TyList of ty
   | TyArrow of (ty list) * ty
+  | TyVar of string
 
 (* expression labels *)
 module ExpLabel = Key.Make (struct let x="lab" end)
@@ -61,6 +62,7 @@ type var = Var.t
 type exp =
   | Hole
   | Var of var
+  | StdLibRef of string
   | Let of (var * exp_label * exp_label)
   | Lambda of ((var list) * exp_label)
   | Call of (exp_label * (exp_label list))
@@ -99,6 +101,8 @@ type exp_node = {
 type program = {
     (* the head node of the program *)
     mutable head : exp_label;
+
+    std_lib : (string * (ty * int)) list;
 
     (* variable operations *)
     new_var : unit -> var;
@@ -145,10 +149,11 @@ type program = {
     args_extvar : args_label -> extvar;
 
     rename_child : (exp_label * exp_label) -> exp_label -> unit;
-
   }
 
-let make_program ty =
+exception BadTypeError of string
+
+let make_program ?(std_lib = []) ty =
   let exp_tbl : exp_node ExpLabel.Tbl.t = ExpLabel.Tbl.create 100  in
   let ty_tbl : ty_node TypeLabel.Tbl.t = TypeLabel.Tbl.create 100 in
   let ty_params_tbl : (ty_label list) TyParamsLabel.Tbl.t = TyParamsLabel.Tbl.create 100 in
@@ -279,13 +284,16 @@ let make_program ty =
        | TyInt -> TyNdInt
        | TyBool -> TyNdBool
        | TyList ty'' -> TyNdList (ty_to_ty_label ty'')
-       | TyArrow (params, res) -> TyNdArrow (List.map ty_to_ty_label params, ty_to_ty_label res))
+       | TyArrow (params, res) -> TyNdArrow (List.map ty_to_ty_label params, ty_to_ty_label res)
+       | TyVar _ -> raise (BadTypeError "Cannot generate polymorphic types"))
   in
 
   let head = new_exp {exp=Hole; ty=ty_to_ty_label ty; prev=None} in
 
   {
     head = head;
+
+    std_lib = std_lib;
 
     new_var = new_var;
     new_extvar = new_extvar;
@@ -316,16 +324,7 @@ let make_program ty =
     args_extvar = args_extvar;
 
     rename_child = rename_child;
-
   }
-
-let rec lookup gamma x =
-  match gamma with
-  | [] -> None
-  | (y, ty) :: gamma' ->
-    if x == y
-    then Some ty
-    else lookup gamma' x
 
 exception ConsistencyError of string
 
@@ -356,6 +355,7 @@ let consistency_check prog =
          match node.exp with
          | Hole -> ()
          | Var _ -> ()
+         | StdLibRef _ -> ()
 
          | ValInt _ -> ()
          | ValBool _ -> ()
@@ -406,6 +406,26 @@ let consistency_check prog =
   (* check that the argsvars points to params, ty_params, and args *)
   consistency_check_exp None prog.head
 
+let rec string_of_ty prog ty =
+  let string_of_ty_params ty_params =
+    match ty_params with
+    | [] -> ""
+    | ty :: tys ->
+      List.fold_left
+        (fun acc ty -> string_of_ty prog ty ^ " " ^ acc)
+        (string_of_ty prog ty)
+        tys
+  in
+  match prog.get_ty ty with
+  | TyNdBool -> "Bool"
+  | TyNdInt -> "Int"
+  | TyNdList ty' -> "(List " ^ string_of_ty prog ty' ^ ")"
+  | TyNdArrow (params, ty_im) ->
+    "(" ^ string_of_ty_params params ^ " -> " ^ string_of_ty prog ty_im ^ ")"
+  | TyNdArrowExt (ty_params, ty_im) ->
+    "(" ^ string_of_ty_params (prog.get_ty_params ty_params) ^ " -> " ^ string_of_ty prog ty_im ^ ")"
+
+
 exception TypeCheckError of string
 
 let rec is_same_ty prog tyl1 tyl2 =
@@ -426,6 +446,28 @@ let is_func_producing prog tylf tyl =
   | TyNdArrowExt (_, tyb) -> is_same_ty prog tyl tyb
   | _ -> false
 
+let rec ty_compat_ty_label prog (ty : ty) (tyl : ty_label) acc =
+  let check b = if b then Some acc else None in
+
+  match ty, prog.get_ty tyl with
+  | TyVar name, _ ->
+    (match List.assoc_opt name acc with
+     | None -> Some ((name, tyl) :: acc)
+     | Some tyl' -> check (is_same_ty prog tyl tyl'))
+  | TyInt, TyNdInt -> Some acc
+  | TyBool, TyNdBool -> Some acc
+  | TyList ty', TyNdList tyl' ->
+    ty_compat_ty_label prog ty' tyl' acc
+  | TyArrow (tys, ty'), TyNdArrow (tyls, tyl') ->
+    if List.length tys == List.length tyls
+    then List.fold_left2
+           (fun acc ty tyl ->
+              Option.bind acc (ty_compat_ty_label prog ty tyl))
+           (ty_compat_ty_label prog ty' tyl' acc)
+           tys tyls
+    else None
+  | _ -> None
+
 (* type check *)
 let type_check prog =
   (* TODO: better errors *)
@@ -439,6 +481,12 @@ let type_check prog =
     if is_same_ty prog tyl1 tyl2
     then ()
     else raise (TypeCheckError "Type mismatch") in
+
+  let ensure_ty_compat ty tyl =
+    match ty_compat_ty_label prog ty tyl [] with
+    | None -> print_string (string_of_ty prog tyl); print_newline ();
+              raise (TypeCheckError "Invalid stdlib reference")
+    | Some _ -> () in
 
   let rec type_check_exp gamma e =
 
@@ -455,9 +503,13 @@ let type_check prog =
     match node.exp with
     | Hole -> node.ty
     | Var var ->
-      (match lookup gamma var with
+      (match List.assoc_opt var gamma with
        | None -> raise (TypeCheckError "Variable not in scope")
        | Some ty' -> ensure_same_ty node.ty ty'; node.ty)
+    | StdLibRef str ->
+      (match List.assoc_opt str prog.std_lib with
+       | None -> raise (TypeCheckError "std lib object not found")
+       | Some (ty', _) -> ensure_ty_compat ty' node.ty; node.ty)
 
     | ValInt _ ->
       if (prog.get_ty node.ty) == TyNdInt
@@ -571,27 +623,6 @@ let check prog = (
   )
 
 
-(* TODO: fix this *)
-let rec string_of_ty prog ty =
-  let string_of_ty_params ty_params =
-    match prog.get_ty_params ty_params with
-    | [] -> ""
-    | ty :: tys ->
-      List.fold_left
-        (fun acc ty -> string_of_ty prog ty ^ " " ^ acc)
-        (string_of_ty prog ty)
-        tys
-  in
-  match prog.get_ty ty with
-  | TyNdBool -> "Bool"
-  | TyNdInt -> "Int"
-  | TyNdList ty' -> "(List " ^ string_of_ty prog ty' ^ ")"
-  | TyNdArrow (_params, ty_im) ->
-    "todo params " ^ " -> " ^ string_of_ty prog ty_im
-  | TyNdArrowExt (ty_params, ty_im) ->
-    string_of_ty_params ty_params ^ " -> " ^ string_of_ty prog ty_im
-
-
 let rec string_of_exp prog e =
   let string_of_params params =
     match params with
@@ -612,6 +643,7 @@ let rec string_of_exp prog e =
   let node = prog.get_exp e in
   match node.exp with
   | Hole -> "[]"
+  | StdLibRef str -> str
   | Var var -> Var.to_string var
   | Let (var, rhs, body) ->
     "(let " ^ Var.to_string var

@@ -25,6 +25,7 @@ let print (prog : Exp.program) =
     match node.exp with
     | Hole -> raise FoundHole
     | Var var -> str_var var
+    | StdLibRef str -> str
     | ValInt i -> Int.to_string i
     | ValBool b -> (match b with
                     | true -> "True"

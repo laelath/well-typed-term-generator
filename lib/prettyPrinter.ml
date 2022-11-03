@@ -27,6 +27,7 @@ let pretty_print (prog : Exp.program) : unit =
     match (prog.get_exp e).exp with
     | Hole -> "[~]" :: acc
     | Var x -> (Exp.Var.to_string x) :: acc
+    | StdLibRef str -> str :: acc
     | Let (x, rhs, body) ->
       let body = "\n"::(tab tab_i)::"in"
                  ::"\n"::(tab tab_i1)::(print_e body tab_i1 acc) in

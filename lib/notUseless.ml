@@ -317,6 +317,58 @@ let create_constructor (size : int) (prog : Exp.program) (e : Exp.exp_label) =
   prog.set_exp e {exp=exp; ty=node.ty; prev=node.prev};
   holes
 
+(* std_lib objects specify an occurence amount,
+   objects are filtered so they can be selected 1/n of the time they are valid choices *)
+let find_std_lib_refs prog tyl =
+  List.map fst
+    (List.filter (fun (_, (ty, n)) ->
+                    Random.int n == 0
+                    && Option.is_some (Exp.ty_compat_ty_label prog ty tyl []))
+                 prog.std_lib)
+
+let create_std_lib_ref choices (prog : Exp.program) (e : Exp.exp_label) =
+  Printf.printf("creating std lib reference\n");
+  let node = prog.get_exp e in
+  prog.set_exp e {exp=Exp.StdLibRef (choose choices); ty=node.ty; prev=node.prev};
+  []
+
+let find_std_lib_funcs prog tyl =
+  List.flatten
+    (List.map
+       (fun (x, (ty, n)) ->
+          if Random.int n <> 0
+          then []
+          else match ty with
+               | Exp.TyArrow (tys, ty') ->
+                 (match Exp.ty_compat_ty_label prog ty' tyl [] with
+                  | None -> []
+                  | Some mp -> [(x, tys, mp)])
+               | _ -> [])
+       prog.std_lib)
+
+let palka_rule_std_lib choices (prog : Exp.program) (e : Exp.exp_label) =
+  Printf.printf("creating std lib palka call\n");
+  let node = prog.get_exp e in
+  let f, tys, mp = choose choices in
+
+  let rec ty_label_from_ty ty =
+    match ty with
+    | Exp.TyVar var ->
+      (match List.assoc_opt var mp with
+       | None -> raise (InternalError "Need to generate a type")
+       | Some tyl -> tyl)
+    | Exp.TyInt -> prog.new_ty Exp.TyNdInt
+    | Exp.TyBool -> prog.new_ty Exp.TyNdBool
+    | Exp.TyList ty' -> prog.new_ty (Exp.TyNdList (ty_label_from_ty ty'))
+    | Exp.TyArrow (tys, ty') ->
+      prog.new_ty (Exp.TyNdArrow (List.map ty_label_from_ty tys, ty_label_from_ty ty'))
+  in
+
+  let tyls = List.map ty_label_from_ty tys in
+  let holes = List.map (fun tyl -> prog.new_exp {exp=Exp.Hole; ty=tyl; prev=Some e}) tyls in
+  let func = prog.new_exp {exp=Exp.StdLibRef f; ty=prog.new_ty (Exp.TyNdArrow (tyls, node.ty)); prev=Some e} in
+  prog.set_exp e {exp=Exp.Call (func, holes); ty=node.ty; prev=node.prev};
+  holes
 
 (*
    MAIN LOOP
@@ -344,14 +396,20 @@ let generate_exp (size : int) (prog : Exp.program) (e : Exp.exp_label) =
   assert_hole node.exp;
   let vars, funcs = find_vars prog e node.ty in
   let binds = find_enclosing_lambdas prog node.prev [] in
-  Printf.printf ("%i, %i, %i, %i: ") size (List.length vars) (List.length funcs) (List.length binds);
+  let std_lib_refs = find_std_lib_refs prog node.ty in
+  let std_lib_funcs = find_std_lib_funcs prog node.ty in
+  Printf.printf ("%4i: %2i, %2i, %2i, %2i: ")
+    size (List.length vars) (List.length funcs)
+    (List.length binds) (List.length std_lib_refs);
   let rules = [(List.length vars, create_var vars);
+               (List.length std_lib_refs, create_std_lib_ref std_lib_refs);
                (constructor_priority size prog node.ty, (create_constructor size));
                (size / 3, create_if);
                (size / 2, create_ext_function_call);
                (size / 2, let_insertion);
                (size / 3, match_insertion);
                (size * (List.length funcs) * 4, palka_rule funcs);
+               (size * (List.length std_lib_funcs), palka_rule_std_lib std_lib_funcs);
                (size * (List.length binds), not_useless_rule binds)] in
   (choose_frequency rules) prog e
 
@@ -365,8 +423,8 @@ let generate (st : state) (prog : Exp.program) : bool =
     st.size <- if st.size > 0 then st.size - 1 else 0;
     true
 
-let generate_fp (size : int) (ty : Exp.ty) : Exp.program =
-  let prog = Exp.make_program ty in
+let generate_fp ?(std_lib = []) (size : int) (ty : Exp.ty) : Exp.program =
+  let prog = Exp.make_program ~std_lib: std_lib ty in
   let st = make_state size in
   st.worklist.add prog.head;
   let rec lp () =
@@ -374,3 +432,9 @@ let generate_fp (size : int) (ty : Exp.ty) : Exp.program =
     | false -> prog
     | true -> lp() in
   lp()
+
+let haskell_std_lib =
+  [("undefined", (Exp.TyVar "a", 10));
+   ("append", (Exp.TyArrow ([(Exp.TyList (Exp.TyVar "a")); (Exp.TyList (Exp.TyVar "a"))],
+                            (Exp.TyList (Exp.TyVar "a"))),
+               1))]
