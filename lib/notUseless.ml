@@ -242,7 +242,7 @@ let match_insertion (prog : Exp.program) (e : Exp.exp_label) =
   let node' = prog.get_exp e' in
   let e_match = prog.new_exp {exp=Exp.Hole; ty=node'.ty; prev=node'.prev} in
   let hole_nil = prog.new_exp {exp=Exp.Hole; ty=node'.ty; prev=Some e_match} in
-  let list_ty = match (prog.get_ty ty, choose [true; false]) with
+  let list_ty = match (prog.get_ty ty, choose_frequency [(3, true); (1, false)]) with
                 | TyNdList _, true -> Either.Left ty
                 | _ -> Either.Right (prog.new_ty (Exp.TyNdList ty)) in
   let hole_scr = prog.new_exp {exp=Exp.Hole; ty=(match list_ty with | Left ty' -> ty' | Right ty' -> ty'); prev=Some e_match} in
@@ -280,7 +280,7 @@ let create_if (prog : Exp.program) (e : Exp.exp_label) =
    E[<>] ~> E[dcon <> ... <>]
  *)
 let create_constructor (size : int) (prog : Exp.program) (e : Exp.exp_label) =
-  Printf.printf("creating constructor\n");
+  Printf.printf("creating constructor (");
   let node = prog.get_exp e in
 
   let create_lambda params ty_im =
@@ -309,12 +309,18 @@ let create_constructor (size : int) (prog : Exp.program) (e : Exp.exp_label) =
   in
 
   let (exp, holes) = match (prog.get_ty node.ty) with
-    | TyNdBool -> (Exp.ValBool (choose [false; true]), [])
-    | TyNdInt -> (Exp.ValInt (Random.int 10), [])
-    | TyNdList ty' -> create_list ty'
-    | TyNdArrow (params, ty_im) -> create_lambda params ty_im
-    | TyNdArrowExt (ty_params, ty_im) -> create_ext_lambda ty_params ty_im in
+    | TyNdBool -> print_string "Bool"; (Exp.ValBool (choose [false; true]), [])
+    | TyNdInt -> print_string "Int"; (Exp.ValInt (Random.int 10), [])
+    | TyNdList ty' ->
+      print_string "List";
+      create_list ty'
+    | TyNdArrow (params, ty_im) ->
+      print_string "Lambda";
+      create_lambda params ty_im
+    | TyNdArrowExt (ty_params, ty_im) ->
+      print_string "ExtLambda"; create_ext_lambda ty_params ty_im in
   prog.set_exp e {exp=exp; ty=node.ty; prev=node.prev};
+  Printf.printf(")\n");
   holes
 
 (* std_lib objects specify an occurence amount,
@@ -447,11 +453,37 @@ let generate_fp ?(std_lib = []) (size : int) (ty : Exp.ty) : Exp.program =
   lp()
 
 let haskell_std_lib =
-  [("undefined", (Exp.TyVar "a", 10));
-   ("seq", (Exp.TyArrow ([(Exp.TyVar "b"); (Exp.TyVar "a")], (Exp.TyVar "a")), 1));
-   ("append", (Exp.TyArrow ([(Exp.TyList (Exp.TyVar "a")); (Exp.TyList (Exp.TyVar "a"))],
-                            (Exp.TyList (Exp.TyVar "a"))),
-               1))]
+  let open Exp in
+  [("seq", (TyArrow ([TyVar "b"; TyVar "a"], TyVar "a"), 1));
+   ("id", (TyArrow ([TyVar "a"], TyVar "a"), 1));
+   ("(+)", (TyArrow ([TyInt; TyInt], TyInt), 1));
+   ("(+1)", (TyArrow ([TyInt], TyInt), 1));
+   ("(-)", (TyArrow ([TyInt; TyInt], TyInt), 1));
+   ("head", (TyArrow ([TyList (TyVar "a")], TyVar "a"), 1));
+   ("tail", (TyArrow ([TyList (TyVar "a")], TyList (TyVar "a")), 1));
+   ("take", (TyArrow ([TyInt; TyList (TyVar "a")], TyList (TyVar "a")), 1));
+   (*("(!!)", (TyArrow ([TyList (TyVar "a"); TyInt], TyVar "a"), 1));*)
+   ("length", (TyArrow ([TyList (TyVar "a")], TyInt), 1));
+   ("(++)", (TyArrow ([TyList (TyVar "a"); TyList (TyVar "a")],
+                      TyList (TyVar "a")), 1));
+   ("filter", (TyArrow ([TyArrow ([TyVar "a"], TyBool); TyList (TyVar "a")],
+                        TyList (TyVar "a")), 1));
+   ("map", (TyArrow ([TyArrow ([TyVar "a"], TyVar "b"); TyList (TyVar "a")],
+                     TyList (TyVar "b")), 1));
+   ("foldr", (TyArrow ([TyArrow ([TyVar "b"; TyVar "a"],
+                                 TyVar "a");
+                        TyVar "a"; TyList (TyVar "b")],
+                       TyVar "a"), 1));
+   ("odd", (TyArrow ([TyInt], TyBool), 1));
+   ("even", (TyArrow ([TyInt], TyBool), 1));
+   ("(&&)", (TyArrow ([TyBool; TyBool], TyBool), 1));
+   ("(||)", (TyArrow ([TyBool; TyBool], TyBool), 1));
+   ("not", (TyArrow ([TyBool], TyBool), 1));
+   ("((==)::Int -> Int -> Bool)", (TyArrow ([TyInt; TyInt], TyBool), 1));
+   ("((==)::Bool -> Bool -> Bool)", (TyArrow ([TyBool; TyBool], TyBool), 1));
+   ("((==)::[Int] -> [Int] -> Bool)", (TyArrow ([TyList TyInt; TyList TyInt], TyBool), 1));
+   ("undefined", (TyVar "a", 10));
+  ]
 
 let generate_palka size =
   generate_fp ~std_lib:haskell_std_lib size (Exp.TyArrow ([Exp.TyList Exp.TyInt], (Exp.TyList Exp.TyInt)))

@@ -7,8 +7,9 @@ let print (prog : Exp.program) =
   let str_params params =
     match params with
     | [] -> "\\_ -> "
-    | x :: xs ->
-       String.concat "" (List.map (fun var -> "\\" ^ (str_var var) ^ " -> ") (x :: xs))
+    | _ -> List.fold_left
+             (fun acc var -> "\\" ^ str_var var ^ " -> " ^ acc)
+             "" params
   in
 
   let rec str_exp e =
@@ -17,8 +18,9 @@ let print (prog : Exp.program) =
     let str_args args =
       match args with
       | [] -> " ()"
-      | arg :: args ->
-         String.concat " " (List.map (fun arg -> " " ^ (str_exp arg)) (arg :: args))
+      | _ -> List.fold_left
+               (fun acc arg -> " " ^ (str_exp arg) ^ acc)
+               "" args
     in
 
     let node = prog.get_exp e in
@@ -31,16 +33,18 @@ let print (prog : Exp.program) =
                     | true -> "True"
                     | false -> "False")
     | Empty -> "[]"
-    | Cons (fst, rst) -> (str_exp fst) ^ " : " ^ (str_exp rst)
+    | Cons (fst, rst) -> "(" ^ (str_exp fst) ^ " : " ^ (str_exp rst) ^ ")"
     | Match (value, nil_case, (x_fst, x_rst, cons_case)) ->
-       "(case " ^ (str_exp value) ^ " of [] -> " ^ (str_exp nil_case) ^ " " ^ (str_var x_fst) ^ ":" ^ (str_var x_rst) ^ " -> " ^ (str_exp cons_case) ^ ")"
+       "(case " ^ (str_exp value) ^ " of {"
+       ^ "[] -> " ^ (str_exp nil_case) ^ "; "
+       ^ (str_var x_fst) ^ ":" ^ (str_var x_rst) ^ " -> " ^ (str_exp cons_case) ^ "})"
     | Let (var, rhs, body) ->
        "(let " ^ str_var var
        ^ " = " ^ str_exp rhs
        ^ " in " ^ str_exp body ^ ")"
-    | Lambda (params, body) -> 
+    | Lambda (params, body) ->
        "(" ^ str_params params ^ str_exp body ^ ")"
-    | Call (func, args) -> 
+    | Call (func, args) ->
        "(" ^ str_exp func ^ str_args args ^ ")"
     | ExtLambda (params, body) ->
        "(" ^ str_params (prog.get_params params) ^ str_exp body ^ ")"
@@ -49,6 +53,7 @@ let print (prog : Exp.program) =
     | If (pred, thn, els) ->
        "(if " ^ str_exp pred
        ^ " then " ^ str_exp thn
-       ^ " else " ^ str_exp els ^ ")" in
+       ^ " else " ^ str_exp els ^ ")"
+  in
   print_string (str_exp prog.head);
   print_string("\n")
