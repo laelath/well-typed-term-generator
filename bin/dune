@@ -1,0 +1,5 @@
+(executable
+ (public_name gen_haskell)
+ (name gen_haskell)
+ (libraries not_useless)
+ (package gen_haskell))

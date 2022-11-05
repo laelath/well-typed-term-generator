@@ -439,7 +439,7 @@ let generate_exp (size : int) (prog : Exp.program) (e : Exp.exp_label) =
                (size / 3, match_insertion);
                (size * (List.length funcs) * 4, palka_rule funcs);
                (size * (List.length std_lib_funcs) / 8, palka_rule_std_lib std_lib_funcs);
-               (List.length binds + size * (List.length binds) * 8, not_useless_rule binds)] in
+               (size * (List.length binds) * 8, not_useless_rule binds)] in
   (choose_frequency rules) prog e
 
 let generate (st : state) (prog : Exp.program) : bool =
