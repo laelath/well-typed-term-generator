@@ -16,7 +16,7 @@ dune build
 
 to run:
 ```
-dune exec gen_haskell > things.hs 2> log
+dune exec -- gen_haskell -n 1000 -size 100 > things.hs 2> log
 ```
 
 
