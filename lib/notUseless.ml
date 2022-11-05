@@ -127,14 +127,23 @@ let find_vars (prog : Exp.program) (e : Exp.exp_label) (ty : Exp.ty_label) =
   (vars, funcs)
 
 (* takes E[e] and finds all lambdas i such that E_1[lambda_i xs . E_2[e]] *)
-let rec find_enclosing_lambdas (prog : Exp.program) (e : Exp.exp_label option) acc : (Exp.params_label list) =
-  match e with
-  | None -> acc
-  | Some e ->
-    let node = prog.get_exp e in
-    match node.exp with
-    | ExtLambda (params, _) -> find_enclosing_lambdas prog node.prev (params :: acc)
-    | _ -> find_enclosing_lambdas prog node.prev acc
+let find_enclosing_lambdas (prog : Exp.program) (e : Exp.exp_label) : (Exp.params_label list) =
+  let node = prog.get_exp e in
+
+  let rec find_enc ep acc =
+    match ep with
+    | None -> acc
+    | Some e ->
+      let node' = prog.get_exp e in
+      match node'.exp with
+      | ExtLambda (params, _) ->
+        if not (Exp.is_same_ty prog node'.ty node.ty)
+           && (Random.int (List.length (prog.get_params params) + 1) == 0)
+        then find_enc node'.prev (params :: acc)
+        else find_enc node'.prev acc
+      | _ -> find_enc node'.prev acc
+  in
+  find_enc node.prev []
 
 
 (*
@@ -152,7 +161,7 @@ let rec find_enclosing_lambdas (prog : Exp.program) (e : Exp.exp_label option) a
    E_1{alpha + tau}[lambda_i (x::xs) alpha . E_2{alpha + tau}[x]]
  *)
 let not_useless_rule (params : Exp.params_label list) (prog : Exp.program) (e : Exp.exp_label) =
-  Printf.printf("extending ext. variable\n");
+  Printf.eprintf ("extending ext. variable\n");
   let node = prog.get_exp e in
   (* TODO: filter params by ty, don't want to cause circularities? *)
   let param = choose params in
@@ -167,7 +176,7 @@ let not_useless_rule (params : Exp.params_label list) (prog : Exp.program) (e : 
    E[<>] ~> E[call <> alpha] where alpha is fresh
  *)
 let create_ext_function_call (prog : Exp.program) (e : Exp.exp_label) =
-  Printf.printf("creating ext. function call\n");
+  Printf.eprintf ("creating ext. function call\n");
   let node = prog.get_exp e in
   let extvar = prog.new_extvar() in
   let f_ty = prog.new_ty (Exp.TyNdArrowExt (prog.new_ty_params extvar, node.ty)) in
@@ -180,7 +189,7 @@ let create_ext_function_call (prog : Exp.program) (e : Exp.exp_label) =
    E[<>] ~> E[call f <> ... alpha] where f is in alpha
  *)
 let palka_rule (funcs : (Exp.var * Exp.ty_label) list) (prog : Exp.program) (e : Exp.exp_label) =
-  Printf.printf("creating ext. palka function call\n");
+  Printf.eprintf ("creating ext. palka function call\n");
   let node = prog.get_exp e in
   let (f, f_ty) = choose funcs in
   let fe = prog.new_exp {exp=Exp.Var f; ty=f_ty; prev=Some e} in
@@ -217,7 +226,7 @@ let rec find_pos (height : int) (prog : Exp.program) (e : Exp.exp_label) =
        | Some e' -> find_pos (height - 1) prog e'
 
 let let_insertion (prog : Exp.program) (e : Exp.exp_label) =
-  Printf.printf("inserting let\n");
+  Printf.eprintf ("inserting let\n");
   let ty = (prog.get_exp e).ty in
   let depth = exp_depth prog e in
   let e' = find_pos (Random.int (depth + 1)) prog e in
@@ -235,7 +244,7 @@ let let_insertion (prog : Exp.program) (e : Exp.exp_label) =
   [hole]
 
 let match_insertion (prog : Exp.program) (e : Exp.exp_label) =
-  Printf.printf("inserting match\n");
+  Printf.eprintf ("inserting match\n");
   let ty = (prog.get_exp e).ty in
   let depth = exp_depth prog e in
   let e' = find_pos (Random.int (depth + 1)) prog e in
@@ -261,14 +270,14 @@ let match_insertion (prog : Exp.program) (e : Exp.exp_label) =
    E[<>] ~> E[x]
  *)
 let create_var (vars : (Exp.var * Exp.ty_label) list) (prog : Exp.program) (e : Exp.exp_label) =
-  Printf.printf("creating var reference\n");
+  Printf.eprintf ("creating var reference\n");
   let node = prog.get_exp e in
   prog.set_exp e {exp=Exp.Var (fst (choose vars)); ty=node.ty; prev=node.prev};
   []
 
 (* Implements the rule *)
 let create_if (prog : Exp.program) (e : Exp.exp_label) =
-  Printf.printf("creating if\n");
+  Printf.eprintf ("creating if\n");
   let node = prog.get_exp e in
   let pred = prog.new_exp {exp=Exp.Hole; ty=prog.new_ty Exp.TyNdBool; prev=Some e} in
   let thn = prog.new_exp {exp=Exp.Hole; ty=node.ty; prev=Some e} in
@@ -280,7 +289,6 @@ let create_if (prog : Exp.program) (e : Exp.exp_label) =
    E[<>] ~> E[dcon <> ... <>]
  *)
 let create_constructor (size : int) (prog : Exp.program) (e : Exp.exp_label) =
-  Printf.printf("creating constructor (");
   let node = prog.get_exp e in
 
   let create_lambda params ty_im =
@@ -308,19 +316,20 @@ let create_constructor (size : int) (prog : Exp.program) (e : Exp.exp_label) =
       ()
   in
 
+  Printf.eprintf ("creating constructor (");
   let (exp, holes) = match (prog.get_ty node.ty) with
-    | TyNdBool -> print_string "Bool"; (Exp.ValBool (choose [false; true]), [])
-    | TyNdInt -> print_string "Int"; (Exp.ValInt (Random.int 10), [])
+    | TyNdBool -> Printf.eprintf "Bool"; (Exp.ValBool (choose [false; true]), [])
+    | TyNdInt -> Printf.eprintf "Int"; (Exp.ValInt (Random.int 10), [])
     | TyNdList ty' ->
-      print_string "List";
+      Printf.eprintf "List";
       create_list ty'
     | TyNdArrow (params, ty_im) ->
-      print_string "Lambda";
+      Printf.eprintf "Lambda";
       create_lambda params ty_im
     | TyNdArrowExt (ty_params, ty_im) ->
-      print_string "ExtLambda"; create_ext_lambda ty_params ty_im in
+      Printf.eprintf "ExtLambda"; create_ext_lambda ty_params ty_im in
   prog.set_exp e {exp=exp; ty=node.ty; prev=node.prev};
-  Printf.printf(")\n");
+  Printf.eprintf (")\n");
   holes
 
 (* std_lib objects specify an occurence amount,
@@ -336,7 +345,7 @@ let find_std_lib_refs prog tyl =
 let create_std_lib_ref choices (prog : Exp.program) (e : Exp.exp_label) =
   let node = prog.get_exp e in
   let x = choose choices in
-  Printf.printf("creating std lib reference: %s\n") x;
+  Printf.eprintf ("creating std lib reference: %s\n") x;
   prog.set_exp e {exp=Exp.StdLibRef x; ty=node.ty; prev=node.prev};
   []
 
@@ -353,6 +362,7 @@ let find_std_lib_funcs prog tyl =
             | _ -> None)
     prog.std_lib
 
+(* TODO: pass full list of in-scope variables here *)
 let rec generate_type size (prog : Exp.program) =
   prog.new_ty
     ((choose_frequency
@@ -363,7 +373,7 @@ let rec generate_type size (prog : Exp.program) =
 let palka_rule_std_lib choices (prog : Exp.program) (e : Exp.exp_label) =
   let node = prog.get_exp e in
   let f, tys, mp = choose choices in
-  Printf.printf("creating std lib palka call: %s\n") f;
+  Printf.eprintf ("creating std lib palka call: %s\n") f;
 
   let rec ty_label_from_ty mp ty =
     match ty with
@@ -414,22 +424,22 @@ let generate_exp (size : int) (prog : Exp.program) (e : Exp.exp_label) =
   let node = prog.get_exp e in
   assert_hole node.exp;
   let vars, funcs = find_vars prog e node.ty in
-  let binds = find_enclosing_lambdas prog node.prev [] in
+  let binds = find_enclosing_lambdas prog e in
   let std_lib_refs = find_std_lib_refs prog node.ty in
   let std_lib_funcs = find_std_lib_funcs prog node.ty in
-  Printf.printf ("%4i: %2i, %2i, %2i, %2i: ")
+  (* Printf.eprintf ("%4i: %2i, %2i, %2i, %2i: ")
     size (List.length vars) (List.length funcs)
-    (List.length binds) (List.length std_lib_refs);
+    (List.length binds) (List.length std_lib_refs);*)
   let rules = [(List.length vars, create_var vars);
                (List.length std_lib_refs, create_std_lib_ref std_lib_refs);
                (constructor_priority size prog node.ty, (create_constructor size));
                (size / 3, create_if);
-               (size / 2, create_ext_function_call);
+               (size, create_ext_function_call);
                (size / 2, let_insertion);
                (size / 3, match_insertion);
                (size * (List.length funcs) * 4, palka_rule funcs);
-               (size * (List.length std_lib_funcs), palka_rule_std_lib std_lib_funcs);
-               (size * (List.length binds), not_useless_rule binds)] in
+               (size * (List.length std_lib_funcs) / 8, palka_rule_std_lib std_lib_funcs);
+               (List.length binds + size * (List.length binds) * 8, not_useless_rule binds)] in
   (choose_frequency rules) prog e
 
 let generate (st : state) (prog : Exp.program) : bool =
@@ -438,7 +448,7 @@ let generate (st : state) (prog : Exp.program) : bool =
   | Some e ->
     let holes = generate_exp st.size prog e in
     List.iter (fun hole -> st.worklist.add hole) holes;
-    Exp.check prog;
+    (*Exp.check prog;*)
     st.size <- if st.size > 0 then st.size - 1 else 0;
     true
 
@@ -451,39 +461,3 @@ let generate_fp ?(std_lib = []) (size : int) (ty : Exp.ty) : Exp.program =
     | false -> prog
     | true -> lp() in
   lp()
-
-let haskell_std_lib =
-  let open Exp in
-  [("seq", (TyArrow ([TyVar "b"; TyVar "a"], TyVar "a"), 1));
-   ("id", (TyArrow ([TyVar "a"], TyVar "a"), 1));
-   ("(+)", (TyArrow ([TyInt; TyInt], TyInt), 1));
-   ("(+1)", (TyArrow ([TyInt], TyInt), 1));
-   ("(-)", (TyArrow ([TyInt; TyInt], TyInt), 1));
-   ("head", (TyArrow ([TyList (TyVar "a")], TyVar "a"), 1));
-   ("tail", (TyArrow ([TyList (TyVar "a")], TyList (TyVar "a")), 1));
-   ("take", (TyArrow ([TyInt; TyList (TyVar "a")], TyList (TyVar "a")), 1));
-   (*("(!!)", (TyArrow ([TyList (TyVar "a"); TyInt], TyVar "a"), 1));*)
-   ("length", (TyArrow ([TyList (TyVar "a")], TyInt), 1));
-   ("(++)", (TyArrow ([TyList (TyVar "a"); TyList (TyVar "a")],
-                      TyList (TyVar "a")), 1));
-   ("filter", (TyArrow ([TyArrow ([TyVar "a"], TyBool); TyList (TyVar "a")],
-                        TyList (TyVar "a")), 1));
-   ("map", (TyArrow ([TyArrow ([TyVar "a"], TyVar "b"); TyList (TyVar "a")],
-                     TyList (TyVar "b")), 1));
-   ("foldr", (TyArrow ([TyArrow ([TyVar "b"; TyVar "a"],
-                                 TyVar "a");
-                        TyVar "a"; TyList (TyVar "b")],
-                       TyVar "a"), 1));
-   ("odd", (TyArrow ([TyInt], TyBool), 1));
-   ("even", (TyArrow ([TyInt], TyBool), 1));
-   ("(&&)", (TyArrow ([TyBool; TyBool], TyBool), 1));
-   ("(||)", (TyArrow ([TyBool; TyBool], TyBool), 1));
-   ("not", (TyArrow ([TyBool], TyBool), 1));
-   ("((==)::Int -> Int -> Bool)", (TyArrow ([TyInt; TyInt], TyBool), 1));
-   ("((==)::Bool -> Bool -> Bool)", (TyArrow ([TyBool; TyBool], TyBool), 1));
-   ("((==)::[Int] -> [Int] -> Bool)", (TyArrow ([TyList TyInt; TyList TyInt], TyBool), 1));
-   ("undefined", (TyVar "a", 10));
-  ]
-
-let generate_palka size =
-  generate_fp ~std_lib:haskell_std_lib size (Exp.TyArrow ([Exp.TyList Exp.TyInt], (Exp.TyList Exp.TyInt)))
