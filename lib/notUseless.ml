@@ -138,7 +138,26 @@ let find_vars (prog : Exp.program) (e : Exp.exp_label) (ty : Exp.ty_label) =
 
 (* takes E[e] and finds all lambdas i such that E_1[lambda_i xs . E_2[e]] *)
 let find_enclosing_lambdas (prog : Exp.program) (e : Exp.exp_label) : (Exp.params_label list) =
+  let rec find_ext_vars ty =
+    match prog.get_ty ty with
+    | TyNdBool -> Exp.ExtVar.Set.empty
+    | TyNdInt -> Exp.ExtVar.Set.empty
+    | TyNdList ty' -> find_ext_vars ty'
+    | TyNdArrow (params, ty') ->
+      List.fold_left
+        (fun acc ty' -> Exp.ExtVar.Set.union acc (find_ext_vars ty'))
+        (find_ext_vars ty') params
+    | TyNdArrowExt (params, ty') ->
+      Exp.ExtVar.Set.add
+        (prog.ty_params_extvar params)
+        (List.fold_left
+          (fun acc ty' -> Exp.ExtVar.Set.union acc (find_ext_vars ty'))
+          (find_ext_vars ty')
+          (prog.get_ty_params params))
+  in
+
   let node = prog.get_exp e in
+  let extvars = find_ext_vars node.ty in
 
   let rec find_enc ep acc =
     match ep with
@@ -147,7 +166,7 @@ let find_enclosing_lambdas (prog : Exp.program) (e : Exp.exp_label) : (Exp.param
       let node' = prog.get_exp e in
       match node'.exp with
       | ExtLambda (params, _) ->
-        if not (Exp.is_same_ty prog node'.ty node.ty)
+        if not (Exp.ExtVar.Set.mem (prog.params_extvar params) extvars)
            && (Random.int (List.length (prog.get_params params) + 1) == 0)
         then find_enc node'.prev (params :: acc)
         else find_enc node'.prev acc
@@ -173,7 +192,6 @@ let find_enclosing_lambdas (prog : Exp.program) (e : Exp.exp_label) : (Exp.param
 let not_useless_rule (params : Exp.params_label list) (prog : Exp.program) (e : Exp.exp_label) =
   Printf.eprintf ("extending ext. variable\n");
   let node = prog.get_exp e in
-  (* TODO: filter params by ty, don't want to cause circularities? *)
   let param = choose params in
   let extvar = prog.params_extvar param in
   let holes = extend_extvar prog extvar node.ty in
@@ -298,6 +316,7 @@ let create_if (prog : Exp.program) (e : Exp.exp_label) =
 (* Implements the rule:
    E[<>] ~> E[dcon <> ... <>]
  *)
+(* TODO: adjust constructor priority based on type complexity *)
 let create_constructor (size : int) (prog : Exp.program) (e : Exp.exp_label) =
   let node = prog.get_exp e in
 
@@ -449,7 +468,7 @@ let generate_exp (size : int) (prog : Exp.program) (e : Exp.exp_label) =
                (size / 3, match_insertion);
                (size * (List.length funcs) * 4, palka_rule funcs);
                (size * (List.length std_lib_funcs) / 8, palka_rule_std_lib std_lib_funcs);
-               (size * (List.length binds) * 8, not_useless_rule binds)] in
+               ((List.length binds) + size * (List.length binds) * 8, not_useless_rule binds)] in
   (choose_frequency rules) prog e
 
 let generate (st : state) (prog : Exp.program) : bool =
@@ -458,7 +477,7 @@ let generate (st : state) (prog : Exp.program) : bool =
   | Some e ->
     let holes = generate_exp st.size prog e in
     List.iter (fun hole -> st.worklist.add (st.size + 1, hole)) holes;
-    (*Exp.check prog;*)
+    (* Exp.check prog; *)
     st.size <- if st.size > 0 then st.size - 1 else 0;
     true
 
