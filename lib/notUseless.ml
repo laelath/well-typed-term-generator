@@ -15,26 +15,36 @@ let choose (lst : 'a list) : 'a =
 
 let choose_split (lst : 'a list) : 'a * ('a list) =
   let rec extract i lst =
+    let hd = List.hd lst in
     if i == 0
-    then (List.hd lst, List.tl lst)
+    then (hd, List.tl lst)
     else let (a, lst') = extract (i - 1) (List.tl lst) in
-         (a, List.hd lst :: lst') in
+         (a, hd :: lst') in
   extract (Random.int (List.length lst)) lst
 
-let rec get_freq (freqs : (int * 'a) list) (i : int) : 'a =
-  let (n, a) = List.hd freqs in
-  if i < n
-  then a
-  else get_freq (List.tl freqs) (i - n)
-
 let choose_frequency (freqs : (int * 'a) list) : 'a =
+  let rec get_freq (freqs : (int * 'a) list) (i : int) : 'a =
+    let (n, a) = List.hd freqs in
+    if i < n
+    then a
+    else get_freq (List.tl freqs) (i - n) in
+
   let n = List.fold_left (fun acc (m, _) -> acc + m) 0 freqs in
-  let i = Random.int n in
-  get_freq freqs i
+  get_freq freqs (Random.int n)
+
+let choose_frequency_split (freqs : (int * 'a) list) : 'a * ((int * 'a) list) =
+  let rec extract_freq i lst =
+    let hd = List.hd lst in
+    if i < fst hd
+    then (snd hd, List.tl lst)
+    else let (a, lst') = extract_freq (i - fst hd) (List.tl lst) in
+         (a, hd :: lst') in
+  let n = List.fold_left (fun acc (m, _) -> acc + m) 0 freqs in
+  extract_freq (Random.int n) freqs
 
 type worklist = {
     pop : unit -> Exp.exp_label option;
-    add : Exp.exp_label -> unit;
+    add : int * Exp.exp_label-> unit;
   }
 type state = {
     worklist : worklist;
@@ -46,7 +56,7 @@ let make_state (size : int) : state =
   let pop () =
     if List.length !holes == 0
     then None
-    else let (hole, holes') = choose_split !holes in
+    else let (hole, holes') = choose_frequency_split !holes in
          holes := holes';
          Some hole in
   {
@@ -447,7 +457,7 @@ let generate (st : state) (prog : Exp.program) : bool =
   | None -> false
   | Some e ->
     let holes = generate_exp st.size prog e in
-    List.iter (fun hole -> st.worklist.add hole) holes;
+    List.iter (fun hole -> st.worklist.add (st.size + 1, hole)) holes;
     (*Exp.check prog;*)
     st.size <- if st.size > 0 then st.size - 1 else 0;
     true
@@ -455,7 +465,7 @@ let generate (st : state) (prog : Exp.program) : bool =
 let generate_fp ?(std_lib = []) (size : int) (ty : Exp.ty) : Exp.program =
   let prog = Exp.make_program ~std_lib: std_lib ty in
   let st = make_state size in
-  st.worklist.add prog.head;
+  st.worklist.add (st.size, prog.head);
   let rec lp () =
     match generate st prog with
     | false -> prog
