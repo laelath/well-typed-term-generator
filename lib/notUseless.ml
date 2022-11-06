@@ -417,8 +417,8 @@ let constructor_priority (size : int) (prog : Exp.program) (ty : Exp.ty_label) =
   match prog.get_ty ty with
   | Exp.TyNdBool -> 1
   | Exp.TyNdInt -> 1
-  | Exp.TyNdList _ -> 1 + size
-  | Exp.TyNdArrow (_, _) -> 1 + size
+  | Exp.TyNdList _ -> 1 + (size * 2)
+  | Exp.TyNdArrow (_, _) -> 1 + (size * 2)
   | Exp.TyNdArrowExt (_, _) -> 1 + (size * 4)
 
 let assert_hole (exp : Exp.exp) =
