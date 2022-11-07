@@ -138,9 +138,31 @@ let generate_palka_batch batch size =
   in
   gen_batch batch []
 
-let generate_palka_file batch size =
+let generate_palka_file ?(sep = "====") batch size =
   let fs = generate_palka_batch batch size in
-  "things :: [[Int] -> [Int]]\nthings = [\n  " ^ String.concat ",\n  " fs ^ "\n  ]\n"
+  "module Main where\n" ^
+  "import Control.Monad\n" ^
+  "import qualified Control.Exception as E\n" ^
+  "import System.IO (hSetBuffering, stdout, BufferMode (NoBuffering))\n" ^
+  "handler (E.ErrorCall s) = putStrLn $ \"*** Exception: \"\n" ^
+  "incomplete1 0 = [undefined]\n" ^
+  "incomplete1 n = n:(incomplete1 (n-1))\n" ^
+  "incomplete2 0 = undefined\n" ^
+  "incomplete2 n = n:(incomplete2 (n-1))\n" ^
+  "incomplete3 n 0 = undefined:reverse [0..n-1]\n" ^
+  "incomplete3 n m = n:incomplete3 (n-1) (m-1)\n" ^
+  "codeList :: [[Int] -> [Int]]\n" ^
+  "codeList = [\n  " ^ String.concat ",\n  " fs ^ "\n  ]\n" ^
+  "main = do\n" ^
+  "  hSetBuffering stdout NoBuffering\n" ^
+  "  forM_ codeList $ \\code -> do\n" ^
+  "    forM_ [0..5] $ \\x -> do\n" ^
+  "      E.catch (print $ code $ incomplete1 x) handler\n" ^
+  "    forM_ [0..5] $ \\x -> do\n" ^
+  "      E.catch (print $ code $ incomplete2 x) handler\n" ^
+  "    forM_ [0..5] $ \\x -> forM_ [0..x] $ \\y -> do\n" ^
+  "      E.catch (print $ code $ incomplete3 x y) handler\n" ^
+  "    putStrLn \"" ^ sep ^ "\"\n"
 
 
 let n = ref 100
