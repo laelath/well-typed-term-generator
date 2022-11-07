@@ -98,10 +98,8 @@ let extend_extvar (prog : Exp.program) (extvar : Exp.extvar) (ext_ty : Exp.ty_la
 
   !exp_lbls
 
-(* finds all the variables with the same type,
-   functions that return this type,
-   and TODO: types equivalent up to extvar extensions *)
-let find_vars (prog : Exp.program) (e : Exp.exp_label) (ty : Exp.ty_label) =
+(* finds all the variables in scope of a hole *)
+let find_vars (prog : Exp.program) (e : Exp.exp_label) =
   let rec find_binds (e : Exp.exp_label) =
     match (prog.get_exp e).prev with
     | None -> []
@@ -130,11 +128,7 @@ let find_vars (prog : Exp.program) (e : Exp.exp_label) (ty : Exp.ty_label) =
             | _ -> raise (InternalError "lambda does not have arrow type"))
          | _ -> [])
         (find_binds ep) in
-
-  let binds = find_binds e in
-  let vars = List.filter (fun b -> Exp.is_same_ty prog (snd b) ty) binds in
-  let funcs = List.filter (fun b -> Exp.is_func_producing prog (snd b) ty) binds in
-  (vars, funcs)
+  find_binds e
 
 (* takes E[e] and finds all lambdas i such that E_1[lambda_i xs . E_2[e]] *)
 let find_enclosing_lambdas (prog : Exp.program) (e : Exp.exp_label) : (Exp.params_label list) =
@@ -295,6 +289,17 @@ let match_insertion (prog : Exp.program) (e : Exp.exp_label) =
   prog.set_exp e {exp=Exp.Var (match list_ty with | Left _ -> y | Right _ -> x); ty=node.ty; prev=node.prev};
   [hole_scr; hole_nil]
 
+let create_match (vars : (Exp.var * Exp.ty_label) list) (prog : Exp.program) (e : Exp.exp_label) =
+  Printf.eprintf ("creating match\n");
+  let node = prog.get_exp e in
+  let x, ty = choose vars in
+  let e_scr = prog.new_exp {exp=Exp.Var x; ty=ty; prev=Some e} in
+  let e_empty = prog.new_exp {exp=Exp.Hole; ty=node.ty; prev=Some e} in
+  let e_cons = prog.new_exp {exp=Exp.Hole; ty=node.ty; prev=Some e} in
+  prog.set_exp e {exp=Exp.Match (e_scr, e_empty, (prog.new_var (), prog.new_var (), e_cons));
+                  ty=node.ty; prev=node.prev};
+  [e_empty; e_cons]
+
 (* Implements the rule:
    E[<>] ~> E[x]
  *)
@@ -437,7 +442,7 @@ let rec type_complexity (prog : Exp.program) (ty : Exp.ty_label) =
   match prog.get_ty ty with
   | Exp.TyNdBool -> 1
   | Exp.TyNdInt -> 1
-  | Exp.TyNdList ty' -> 1 + type_complexity prog ty'
+  | Exp.TyNdList ty' -> 2 + type_complexity prog ty'
   | Exp.TyNdArrow (params, ty') ->
     List.fold_left
       (fun acc ty'' -> acc + type_complexity prog ty'')
@@ -457,6 +462,11 @@ let constructor_priority (size : int) (prog : Exp.program) (ty : Exp.ty_label) =
   | Exp.TyNdArrow (_, _) -> 1 + size
   | Exp.TyNdArrowExt (_, _) -> 1 + (size * 2)
 
+let is_list_ty (prog : Exp.program) ty =
+  match prog.get_ty ty with
+  | Exp.TyNdList _ -> true
+  | _ -> false
+
 let assert_hole (exp : Exp.exp) =
   match exp with
   | Exp.Hole -> ()
@@ -469,7 +479,10 @@ let assert_hole (exp : Exp.exp) =
 let generate_exp (size : int) (prog : Exp.program) (e : Exp.exp_label) =
   let node = prog.get_exp e in
   assert_hole node.exp;
-  let vars, funcs = find_vars prog e node.ty in
+  let all_vars = find_vars prog e in
+  let vars = List.filter (fun b -> Exp.is_same_ty prog (snd b) node.ty) all_vars in
+  let funcs = List.filter (fun b -> Exp.is_func_producing prog (snd b) node.ty) all_vars in
+  let lists = List.filter (fun b -> is_list_ty prog (snd b)) all_vars in
   let binds = find_enclosing_lambdas prog e in
   let std_lib_refs = find_std_lib_refs prog node.ty in
   let std_lib_funcs = find_std_lib_funcs prog node.ty in
@@ -483,6 +496,7 @@ let generate_exp (size : int) (prog : Exp.program) (e : Exp.exp_label) =
                (size, create_ext_function_call);
                (size / 2, let_insertion);
                (size / 3, match_insertion);
+               (size * (List.length lists) / 3, create_match lists);
                (size * (List.length funcs) * 4, palka_rule funcs);
                (size * (List.length std_lib_funcs) / 8, palka_rule_std_lib std_lib_funcs);
                ((List.length binds) + size * (List.length binds) * 8, not_useless_rule binds)] in
