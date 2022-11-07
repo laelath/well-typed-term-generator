@@ -271,6 +271,7 @@ let let_insertion (prog : Exp.program) (e : Exp.exp_label) =
   prog.set_exp e {exp=Exp.Var x; ty=node.ty; prev=node.prev};
   [hole]
 
+(* TODO: add matching on a variable in the context -palka match? *)
 let match_insertion (prog : Exp.program) (e : Exp.exp_label) =
   Printf.eprintf ("inserting match\n");
   let ty = (prog.get_exp e).ty in
@@ -297,6 +298,7 @@ let match_insertion (prog : Exp.program) (e : Exp.exp_label) =
 (* Implements the rule:
    E[<>] ~> E[x]
  *)
+(* TODO: increase the chance of variable reference for complex types? *)
 let create_var (vars : (Exp.var * Exp.ty_label) list) (prog : Exp.program) (e : Exp.exp_label) =
   Printf.eprintf ("creating var reference\n");
   let node = prog.get_exp e in
@@ -316,7 +318,6 @@ let create_if (prog : Exp.program) (e : Exp.exp_label) =
 (* Implements the rule:
    E[<>] ~> E[dcon <> ... <>]
  *)
-(* TODO: adjust constructor priority based on type complexity *)
 let create_constructor (size : int) (prog : Exp.program) (e : Exp.exp_label) =
   let node = prog.get_exp e in
 
@@ -432,13 +433,29 @@ let palka_rule_std_lib choices (prog : Exp.program) (e : Exp.exp_label) =
    MAIN LOOP
  *)
 
+let rec type_complexity (prog : Exp.program) (ty : Exp.ty_label) =
+  match prog.get_ty ty with
+  | Exp.TyNdBool -> 1
+  | Exp.TyNdInt -> 1
+  | Exp.TyNdList ty' -> 1 + type_complexity prog ty'
+  | Exp.TyNdArrow (params, ty') ->
+    List.fold_left
+      (fun acc ty'' -> acc + type_complexity prog ty'')
+      (1 + type_complexity prog ty')
+      params
+  | Exp.TyNdArrowExt (params, ty') ->
+    List.fold_left
+      (fun acc ty'' -> acc + type_complexity prog ty'')
+      (1 + type_complexity prog ty')
+      (prog.get_ty_params params)
+
 let constructor_priority (size : int) (prog : Exp.program) (ty : Exp.ty_label) =
   match prog.get_ty ty with
   | Exp.TyNdBool -> 1
   | Exp.TyNdInt -> 1
-  | Exp.TyNdList _ -> 1 + (size * 2)
-  | Exp.TyNdArrow (_, _) -> 1 + (size * 2)
-  | Exp.TyNdArrowExt (_, _) -> 1 + (size * 4)
+  | Exp.TyNdList _ -> 1 + size
+  | Exp.TyNdArrow (_, _) -> 1 + size
+  | Exp.TyNdArrowExt (_, _) -> 1 + (size * 2)
 
 let assert_hole (exp : Exp.exp) =
   match exp with
@@ -461,7 +478,7 @@ let generate_exp (size : int) (prog : Exp.program) (e : Exp.exp_label) =
     (List.length binds) (List.length std_lib_refs);*)
   let rules = [(List.length vars, create_var vars);
                (List.length std_lib_refs, create_std_lib_ref std_lib_refs);
-               (constructor_priority size prog node.ty, (create_constructor size));
+               (type_complexity prog node.ty * constructor_priority size prog node.ty, (create_constructor size));
                (size / 3, create_if);
                (size, create_ext_function_call);
                (size / 2, let_insertion);
