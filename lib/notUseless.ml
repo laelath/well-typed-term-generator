@@ -492,13 +492,13 @@ let generate_exp (size : int) (prog : Exp.program) (e : Exp.exp_label) =
   let rules = [(List.length vars, create_var vars);
                (List.length std_lib_refs, create_std_lib_ref std_lib_refs);
                (type_complexity prog node.ty * constructor_priority size prog node.ty, (create_constructor size));
-               (size / 3, create_if);
+               (size / 6, create_if);
                (size, create_ext_function_call);
-               (size / 2, let_insertion);
-               (size / 3, match_insertion);
+               (size / 4, let_insertion);
+               (size / 6, match_insertion);
                (size * (List.length lists) / 3, create_match lists);
                (size * (List.length funcs) * 4, palka_rule funcs);
-               (size * (List.length std_lib_funcs) / 8, palka_rule_std_lib std_lib_funcs);
+               (size * (List.length std_lib_funcs) / 4, palka_rule_std_lib std_lib_funcs);
                ((List.length binds) + size * (List.length binds) * 8, not_useless_rule binds)] in
   (choose_frequency rules) prog e
 
