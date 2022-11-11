@@ -112,8 +112,8 @@ let find_vars (prog : Exp.program) (e : Exp.exp_label) =
     | None -> []
     | Some ep ->
       let node = prog.get_exp ep in
-      List.append
-        (match node.exp with
+      let exp_binds =
+        match node.exp with
          | Let (x, rhs, body) ->
            if (e == body)
            then [(x, (prog.get_exp rhs).ty)]
@@ -133,8 +133,9 @@ let find_vars (prog : Exp.program) (e : Exp.exp_label) =
            (match prog.get_ty node.ty with
             | TyNdArrowExt (ty_params, _) -> List.combine (prog.get_params params) (prog.get_ty_params ty_params)
             | _ -> raise (InternalError "lambda does not have arrow type"))
-         | _ -> [])
-        (find_binds ep) in
+         | _ -> [] in
+      exp_binds @ find_binds ep
+  in
   find_binds e
 
 (* takes E[e] and finds all lambdas i such that E_1[lambda_i xs . E_2[e]] *)
@@ -287,20 +288,18 @@ let let_insertion_steps (prog : Exp.program) (hole : hole_info) =
   List.map let_insertion_step (List.init (hole.depth + 1) (fun x -> x))
 
 
-(* TODO: flatten choice of adding it as list binding *)
+(* TODO: reduce redundancy *)
 let match_insertion_steps (prog : Exp.program) (hole : hole_info) =
   let match_insertion_step height =
     (max 0 (hole.fuel - hole.depth),
      fun () ->
-       Printf.eprintf ("inserting match\n");
+       Printf.eprintf ("inserting match (fst)\n");
        let e' = find_pos prog hole.label height in
        let node' = prog.get_exp e' in
        let e_match = prog.new_exp {exp=Exp.Hole; ty=node'.ty; prev=node'.prev} in
        let hole_nil = prog.new_exp {exp=Exp.Hole; ty=node'.ty; prev=Some e_match} in
-       let list_ty = match (prog.get_ty hole.ty_label, choose_frequency [(3, true); (1, false)]) with
-                     | TyNdList _, true -> Either.Left hole.ty_label
-                     | _ -> Either.Right (prog.new_ty (Exp.TyNdList hole.ty_label)) in
-       let hole_scr = prog.new_exp {exp=Exp.Hole; ty=(match list_ty with | Left ty' -> ty' | Right ty' -> ty'); prev=Some e_match} in
+       let list_ty = prog.new_ty (Exp.TyNdList hole.ty_label) in
+       let hole_scr = prog.new_exp {exp=Exp.Hole; ty=list_ty; prev=Some e_match} in
        let x = prog.new_var () in
        let y = prog.new_var () in
        prog.set_exp e_match {exp=Exp.Match (hole_scr, hole_nil, (x, y, e')); ty=node'.ty; prev=node'.prev};
@@ -309,10 +308,33 @@ let match_insertion_steps (prog : Exp.program) (hole : hole_info) =
         | None -> prog.head <- e_match
         | Some e'' -> prog.rename_child (e', e_match) e'');
        let node = prog.get_exp hole.label in
-       prog.set_exp hole.label {exp=Exp.Var (match list_ty with | Left _ -> y | Right _ -> x); ty=node.ty; prev=node.prev};
+       prog.set_exp hole.label {exp=Exp.Var x; ty=node.ty; prev=node.prev};
        [hole_scr; hole_nil])
   in
-  List.map match_insertion_step (List.init (hole.depth + 1) (fun x -> x))
+  let match_insertion_list_step height =
+    (max 0 (hole.fuel - hole.depth),
+     fun () ->
+       Printf.eprintf ("inserting match (rst)\n");
+       let e' = find_pos prog hole.label height in
+       let node' = prog.get_exp e' in
+       let e_match = prog.new_exp {exp=Exp.Hole; ty=node'.ty; prev=node'.prev} in
+       let hole_nil = prog.new_exp {exp=Exp.Hole; ty=node'.ty; prev=Some e_match} in
+       let hole_scr = prog.new_exp {exp=Exp.Hole; ty=hole.ty_label; prev=Some e_match} in
+       let x = prog.new_var () in
+       let y = prog.new_var () in
+       prog.set_exp e_match {exp=Exp.Match (hole_scr, hole_nil, (x, y, e')); ty=node'.ty; prev=node'.prev};
+       prog.set_exp e' {exp=node'.exp; ty=node'.ty; prev=Some e_match};
+       (match node'.prev with
+        | None -> prog.head <- e_match
+        | Some e'' -> prog.rename_child (e', e_match) e'');
+       let node = prog.get_exp hole.label in
+       prog.set_exp hole.label {exp=Exp.Var y; ty=node.ty; prev=node.prev};
+       [hole_scr; hole_nil])
+  in
+  List.map match_insertion_step (List.init (hole.depth + 1) (fun x -> x)) @
+  match prog.get_ty hole.ty_label with
+  | TyNdList _ -> List.map match_insertion_list_step (List.init (hole.depth + 1) (fun x -> x))
+  | _ -> []
 
 
 let is_list_ty (prog : Exp.program) ty =
