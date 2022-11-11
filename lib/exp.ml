@@ -440,7 +440,7 @@ let rec is_same_ty prog tyl1 tyl2 =
          && is_same_ty prog tyb1 tyb2
        | (_, _) -> false
 
-let is_func_producing prog tylf tyl =
+let is_func_producing prog tyl tylf =
   match prog.get_ty tylf with
   | TyNdArrow (_, tyb) -> is_same_ty prog tyl tyb
   | TyNdArrowExt (_, tyb) -> is_same_ty prog tyl tyb
