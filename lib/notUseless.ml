@@ -16,14 +16,8 @@ type state = {
     worklist : worklist;
     mutable fuel : int;
   }
-type hole_info = {
-    label : Exp.exp_label;
-    ty_label : Exp.ty_label;
-    prev : Exp.exp_label option;
-    fuel : int;
-    vars : (Exp.var * Exp.ty_label) list;
-    depth : int;
-  }
+
+type hole_info = Rules.hole_info
 
 let make_state (fuel : int) : state =
   let holes = ref [] in
@@ -50,32 +44,6 @@ exception InternalError of string
   UTIL
  *)
 
-(* Implements the rule:
-   E ~> E{alpha + tau}
- *)
-let extend_extvar (prog : Exp.program) (extvar : Exp.extvar) (ext_ty : Exp.ty_label) =
-  let extend : 'a 'b . Exp.extvar -> (Exp.extvar -> 'a list) -> ('a -> unit) -> unit =
-    fun ext get add ->
-    let lst = get ext in
-    let handle_elt elt = add elt in
-    List.iter handle_elt lst in
-
-  extend extvar prog.extvar_ty_params
-         (fun ty_params -> prog.add_ty_param ty_params ext_ty);
-  extend extvar prog.extvar_params
-         (fun param -> prog.add_param param (prog.new_var()));
-
-  (* Justin: there has to be a better way... *)
-  (* Ben: no *)
-  let exp_lbls = ref [] in
-  extend extvar prog.extvar_args
-         (fun arg ->
-          let app_lbl = prog.args_parent arg in
-          let exp_lbl = prog.new_exp {exp=Exp.Hole; ty=ext_ty; prev=Some app_lbl} in
-          prog.add_arg arg exp_lbl;
-          exp_lbls := exp_lbl :: !exp_lbls);
-
-  !exp_lbls
 
 (* finds all the variables in scope of a hole *)
 let find_vars (prog : Exp.program) (e : Exp.exp_label) =
@@ -156,263 +124,58 @@ let exp_depth (prog : Exp.program) (e : Exp.exp_label) =
     | Some e' -> exp_depth' e' (acc + 1) in
   exp_depth' e 0
 
-let rec find_pos (prog : Exp.program) (e : Exp.exp_label) (height : int) =
-  if height == 0
-  then e
-  else match (prog.get_exp e).prev with
-       | None -> e
-       | Some e' -> find_pos prog e' (height - 1)
-
 let is_list_ty (prog : Exp.program) ty =
   match prog.get_ty ty with
   | Exp.TyNdList _ -> true
   | _ -> false
 
-(* TODO: pass full list of in-scope variables here *)
-let rec generate_type size (prog : Exp.program) =
-  prog.new_ty
-    ((Choose.choose_frequency
-        [(1, (fun _ -> Exp.TyNdBool)); (1, (fun _ -> Exp.TyNdInt));
-         (size, (fun _ -> Exp.TyNdList (generate_type (size - 1) prog)))])
-     ())
-
-let rec ty_label_from_ty prog mp ty =
-  match ty with
-  | Exp.TyVar var ->
-    (match List.assoc_opt var mp with
-     | None -> let tyl = generate_type 3 prog in
-               ((var, tyl) :: mp, tyl)
-     | Some tyl -> (mp, tyl))
-  | Exp.TyInt -> (mp, prog.new_ty Exp.TyNdInt)
-  | Exp.TyBool -> (mp, prog.new_ty Exp.TyNdBool)
-  | Exp.TyList ty' ->
-    let (mp, tyl') = ty_label_from_ty prog mp ty' in
-    (mp, prog.new_ty (Exp.TyNdList tyl'))
-  | Exp.TyArrow (tys, ty') ->
-    let (mp, tyl') = ty_label_from_ty prog mp ty' in
-    let (mp, tys') = List.fold_left_map (ty_label_from_ty prog) mp (List.rev tys) in
-    (mp, prog.new_ty (Exp.TyNdArrow (tys', tyl')))
-
-(* TODO: use this again *)
-let rec type_complexity (prog : Exp.program) (ty : Exp.ty_label) =
-  match prog.get_ty ty with
-  | Exp.TyNdBool -> 1
-  | Exp.TyNdInt -> 1
-  | Exp.TyNdList ty' -> 2 + type_complexity prog ty'
-  | Exp.TyNdArrow (params, ty') ->
-    List.fold_left
-      (fun acc ty'' -> acc + type_complexity prog ty'')
-      (1 + type_complexity prog ty')
-      params
-  | Exp.TyNdArrowExt (params, ty') ->
-    List.fold_left
-      (fun acc ty'' -> acc + type_complexity prog ty'')
-      (1 + type_complexity prog ty')
-      (prog.get_ty_params params)
 
 
 (*
   TRANSITIONS
  *)
 
-(* Implements the rule:
-   E_1[lambda_i xs alpha . E_2[<>]] ~>
-   E_1{alpha + tau}[lambda_i (x::xs) alpha . E_2{alpha + tau}[x]]
+let weight_fuel1 (hole : hole_info) = hole.fuel+1
+let weight_fuel0 (hole : hole_info) = hole.fuel+0
 
-   via the decomposition
-
-   E_1[lambda_i xs alpha . E_2[<>]] ~>
-   E_1{alpha + tau}[lambda_i (x::xs) alpha . E_2{alpha+tau}[<>]] ~>
-   E_1{alpha + tau}[lambda_i (x::xs) alpha . E_2{alpha + tau}[x]]
- *)
 let not_useless_steps (prog : Exp.program) (hole : hole_info) =
-  let not_useless_step param =
-    (hole.fuel + 1,
-     fun () ->
-       Printf.eprintf ("extending ext. var\n");
-       let extvar = prog.params_extvar param in
-       let holes = extend_extvar prog extvar hole.ty_label in
-       let x = List.hd (prog.get_params param) in
-       prog.set_exp hole.label {exp=Exp.Var x; ty=hole.ty_label; prev=hole.prev};
-       holes)
-  in
-
   let params = find_enclosing_lambdas prog hole.label in
-  List.map not_useless_step params
+  List.map (Rules.not_useless_step prog hole weight_fuel1)
+           params
 
-(* Implements the rule:
-   E[<>] ~> E[call <> alpha] where alpha is fresh
- *)
-let ext_function_call_steps (prog : Exp.program) (hole : hole_info) =
-  [(hole.fuel,
-    fun () ->
-      Printf.eprintf ("creating ext. function call\n");
-      let extvar = prog.new_extvar() in
-      let f_ty = prog.new_ty (Exp.TyNdArrowExt (prog.new_ty_params extvar, hole.ty_label)) in
-      let f = prog.new_exp {exp=Exp.Hole; ty=f_ty; prev=Some hole.label} in
-      let args = prog.new_args extvar hole.label in
-      prog.set_exp hole.label {exp=Exp.ExtCall (f, args); ty=hole.ty_label; prev=hole.prev};
-      [f])]
-
-(* Implements the rule:
-   E[<>] ~> E[call f <> ... alpha] where f is in alpha
- *)
 let palka_rule_steps (prog : Exp.program) (hole : hole_info) =
-  let palka_rule_step (f, f_ty) =
-    (hole.fuel,
-     fun () ->
-       Printf.eprintf ("creating palka function call\n");
-       let fe = prog.new_exp {exp=Exp.Var f; ty=f_ty; prev=Some hole.label} in
-       match (prog.get_ty f_ty) with
-       | Exp.TyNdArrowExt (ty_params, _) ->
-         let extvar = prog.ty_params_extvar ty_params in
-         let args = prog.new_args extvar hole.label in
-         let holes = List.map (fun arg_ty ->
-                                 let hole = prog.new_exp {exp=Exp.Hole; ty=arg_ty; prev=Some hole.label} in
-                                 prog.add_arg args hole;
-                                 hole)
-                              (List.rev (prog.get_ty_params ty_params)) in
-         prog.set_exp hole.label {exp=Exp.ExtCall (fe, args); ty=hole.ty_label; prev=hole.prev};
-         holes
-       | Exp.TyNdArrow (tys, _) ->
-         let holes = List.map (fun arg_ty -> prog.new_exp {exp=Exp.Hole; ty=arg_ty; prev=Some hole.label}) tys in
-         prog.set_exp hole.label {exp=Exp.Call (fe, holes); ty=hole.ty_label; prev=hole.prev};
-         holes
-       | _ -> raise (InternalError "variable in function list not a function"))
-  in
-
   let funcs = List.filter (fun b -> Exp.is_func_producing prog hole.ty_label (snd b)) hole.vars in
-  List.map palka_rule_step funcs
+  List.map (Rules.palka_rule_step prog hole weight_fuel0)
+           funcs
 
-(* Implements the rule:
-   FIXME
-   E[<>] ~> 
- *)
 let let_insertion_steps (prog : Exp.program) (hole : hole_info) =
-  let let_insertion_step height =
-    (max 0 (hole.fuel - hole.depth),
-     fun () ->
-       Printf.eprintf ("inserting let\n");
-       let e' = find_pos prog hole.label height in
-       let node' = prog.get_exp e' in
-       let x = prog.new_var () in
-       let e_let = prog.new_exp {exp=Exp.Hole; ty=node'.ty; prev=node'.prev} in
-       let e_hole = prog.new_exp {exp=Exp.Hole; ty=hole.ty_label; prev=Some e_let} in
-       prog.set_exp e_let {exp=Exp.Let (x, e_hole, e'); ty=node'.ty; prev=node'.prev};
-       prog.set_exp e' {exp=node'.exp; ty=node'.ty; prev=Some e_let};
-       (match node'.prev with
-        | None -> prog.head <- e_let
-        | Some e'' -> prog.rename_child (e', e_let) e'');
-       let node = prog.get_exp hole.label in
-       prog.set_exp hole.label {exp=Exp.Var x; ty=node.ty; prev=node.prev};
-       [e_hole])
-  in
-  List.map let_insertion_step (List.init (hole.depth + 1) (fun x -> x))
+  let weight (hole : hole_info) = max 0 (hole.fuel - hole.depth) in
+  List.map (Rules.let_insertion_step prog hole weight)
+           (List.init (hole.depth + 1) (fun x -> x))
 
 
-(* TODO: reduce redundancy *)
-(* Implements the rule:
-   FIXME
-   E[<>] ~> 
- *)
 let match_insertion_steps (prog : Exp.program) (hole : hole_info) =
-  let match_insertion_step height =
-    (max 0 (hole.fuel - hole.depth),
-     fun () ->
-       Printf.eprintf ("inserting match (fst)\n");
-       let e' = find_pos prog hole.label height in
-       let node' = prog.get_exp e' in
-       let e_match = prog.new_exp {exp=Exp.Hole; ty=node'.ty; prev=node'.prev} in
-       let hole_nil = prog.new_exp {exp=Exp.Hole; ty=node'.ty; prev=Some e_match} in
-       let list_ty = prog.new_ty (Exp.TyNdList hole.ty_label) in
-       let hole_scr = prog.new_exp {exp=Exp.Hole; ty=list_ty; prev=Some e_match} in
-       let x = prog.new_var () in
-       let y = prog.new_var () in
-       prog.set_exp e_match {exp=Exp.Match (hole_scr, hole_nil, (x, y, e')); ty=node'.ty; prev=node'.prev};
-       prog.set_exp e' {exp=node'.exp; ty=node'.ty; prev=Some e_match};
-       (match node'.prev with
-        | None -> prog.head <- e_match
-        | Some e'' -> prog.rename_child (e', e_match) e'');
-       let node = prog.get_exp hole.label in
-       prog.set_exp hole.label {exp=Exp.Var x; ty=node.ty; prev=node.prev};
-       [hole_scr; hole_nil])
-  in
-  let match_insertion_list_step height =
-    (max 0 (hole.fuel - hole.depth),
-     fun () ->
-       Printf.eprintf ("inserting match (rst)\n");
-       let e' = find_pos prog hole.label height in
-       let node' = prog.get_exp e' in
-       let e_match = prog.new_exp {exp=Exp.Hole; ty=node'.ty; prev=node'.prev} in
-       let hole_nil = prog.new_exp {exp=Exp.Hole; ty=node'.ty; prev=Some e_match} in
-       let hole_scr = prog.new_exp {exp=Exp.Hole; ty=hole.ty_label; prev=Some e_match} in
-       let x = prog.new_var () in
-       let y = prog.new_var () in
-       prog.set_exp e_match {exp=Exp.Match (hole_scr, hole_nil, (x, y, e')); ty=node'.ty; prev=node'.prev};
-       prog.set_exp e' {exp=node'.exp; ty=node'.ty; prev=Some e_match};
-       (match node'.prev with
-        | None -> prog.head <- e_match
-        | Some e'' -> prog.rename_child (e', e_match) e'');
-       let node = prog.get_exp hole.label in
-       prog.set_exp hole.label {exp=Exp.Var y; ty=node.ty; prev=node.prev};
-       [hole_scr; hole_nil])
-  in
-  List.map match_insertion_step (List.init (hole.depth + 1) (fun x -> x)) @
+  let weight (hole : hole_info) = max 0 (hole.fuel - hole.depth) in
+  let all_depths = List.init (hole.depth + 1) (fun x -> x) in
+  List.map (Rules.match_insertion_step prog hole weight) 
+           all_depths
+  @
   match prog.get_ty hole.ty_label with
-  | TyNdList _ -> List.map match_insertion_list_step (List.init (hole.depth + 1) (fun x -> x))
+  | TyNdList _ -> List.map (Rules.match_insertion_list_step prog hole weight)
+                           all_depths
   | _ -> []
 
 
-(* Implements the rule:
-   FIXME
-   E[<>] ~> 
- *)
 let create_match_steps (prog : Exp.program) (hole : hole_info) =
-  let create_match_step (x, ty) =
-    (hole.fuel,
-     fun () ->
-       Printf.eprintf ("creating match\n");
-       let e_scr = prog.new_exp {exp=Exp.Var x; ty=ty; prev=Some hole.label} in
-       let e_empty = prog.new_exp {exp=Exp.Hole; ty=hole.ty_label; prev=Some hole.label} in
-       let e_cons = prog.new_exp {exp=Exp.Hole; ty=hole.ty_label; prev=Some hole.label} in
-       prog.set_exp hole.label
-                    {exp=Exp.Match (e_scr, e_empty, (prog.new_var (), prog.new_var (), e_cons));
-                     ty=hole.ty_label; prev=hole.prev};
-       [e_empty; e_cons])
-  in
   let lists = List.filter (fun b -> is_list_ty prog (snd b)) hole.vars in
-  List.map create_match_step lists
+  List.map (Rules.create_match_step prog hole weight_fuel0) lists
 
-
-(* Implements the rule:
-   E[<>] ~> E[x]
- *)
-(* TODO: increase the chance of variable reference for complex types? *)
 let var_steps (prog : Exp.program) (hole : hole_info) =
-  let var_step (var, _) =
-    (1, fun () ->
-          Printf.eprintf ("creating var reference\n");
-          prog.set_exp hole.label {exp=Exp.Var var; ty=hole.ty_label; prev=hole.prev};
-          [])
-  in
-
+  let weight _ = 1 in
   let ref_vars = List.filter (fun b -> Exp.is_same_ty prog (snd b) hole.ty_label) hole.vars in
-  List.map var_step ref_vars
+  List.map (Rules.var_step prog hole weight) ref_vars
 
 
-(* Implements the rule:
-   FIXME
-   E[<>] ~> 
- *)
-let create_if_steps (prog : Exp.program) (hole : hole_info) =
-  [(hole.fuel,
-    fun () ->
-      Printf.eprintf ("creating if\n");
-      let pred = prog.new_exp {exp=Exp.Hole; ty=prog.new_ty Exp.TyNdBool; prev=Some hole.label} in
-      let thn = prog.new_exp {exp=Exp.Hole; ty=hole.ty_label; prev=Some hole.label} in
-      let els = prog.new_exp {exp=Exp.Hole; ty=hole.ty_label; prev=Some hole.label} in
-      prog.set_exp hole.label {exp=Exp.If (pred, thn, els); ty=hole.ty_label; prev=hole.prev};
-      [pred; thn; els])]
 
 
 (* std_lib objects specify an occurence amount,
@@ -426,15 +189,10 @@ let find_std_lib_refs prog tyl =
     prog.std_lib
 
 let std_lib_steps (prog : Exp.program) (hole : hole_info) =
-  let std_lib_step x =
-    (1, (* TODO: incorporate occurence amount here *)
-     fun () ->
-       Printf.eprintf ("creating std lib reference: %s\n") x;
-       prog.set_exp hole.label {exp=Exp.StdLibRef x; ty=hole.ty_label; prev=hole.prev};
-       [])
-  in
   let valid_refs = find_std_lib_refs prog hole.ty_label in
-  List.map std_lib_step valid_refs
+  let weight _ = 1 in
+  List.map (Rules.std_lib_step weight prog hole) valid_refs
+
 
 
 (* finds all functions in the standard library that can produce tyl *)
@@ -451,27 +209,15 @@ let find_std_lib_funcs prog tyl =
             | _ -> None)
     prog.std_lib
 
-(* Implements the rule:
-   FIXME
-   E[<>] ~> 
- *)
-let std_lib_palka_rule_steps (prog : Exp.program) (hole : hole_info) =
-  let std_lib_palka_rule_step (f, tys, mp) =
-    (hole.fuel, (* TODO: incorporate occurence amount here *)
-     fun () ->
-       Printf.eprintf ("creating std lib palka call: %s\n") f;
-       let (_, tyls) = List.fold_left_map (ty_label_from_ty prog) mp (List.rev tys) in
-       let holes = List.map (fun tyl -> prog.new_exp {exp=Exp.Hole; ty=tyl; prev=Some hole.label}) tyls in
-       let func = prog.new_exp {exp=Exp.StdLibRef f; ty=prog.new_ty (Exp.TyNdArrow (tyls, hole.ty_label)); prev=Some hole.label} in
-       prog.set_exp hole.label {exp=Exp.Call (func, holes); ty=hole.ty_label; prev=hole.prev};
-       holes)
-  in
-  List.map std_lib_palka_rule_step (find_std_lib_funcs prog hole.ty_label)
 
+let std_lib_palka_rule_steps (prog : Exp.program) (hole : hole_info) =
+  List.map (Rules.std_lib_palka_rule_step weight_fuel0 prog hole)
+           (find_std_lib_funcs prog hole.ty_label)
 
 (* Implements the rule:
    E[<>] ~> E[dcon <> ... <>]
  *)
+(* FIXME factor this *)
 let constructor_steps (prog : Exp.program) (hole : hole_info) =
   let set exp =
     prog.set_exp hole.label {exp=exp; ty=hole.ty_label; prev=hole.prev}
@@ -517,17 +263,21 @@ let constructor_steps (prog : Exp.program) (hole : hole_info) =
    MAIN LOOP
  *)
 
+let singleton f prog hole = [f prog hole]
+
+let not_use_for_base (hole : hole_info) = if hole.fuel = 0 then 0 else 1
+
 let step_generators : (Exp.program -> hole_info -> (int * (unit -> Exp.exp_label list)) list) list =
   [
     constructor_steps;
     var_steps;
     std_lib_steps;
     std_lib_palka_rule_steps;
-    ext_function_call_steps;
+    singleton (Rules.ext_function_call_steps weight_fuel0);
     let_insertion_steps;
     match_insertion_steps;
     create_match_steps;
-    create_if_steps;
+    singleton (Rules.create_if_steps weight_fuel0);
     palka_rule_steps;
     not_useless_steps;
   ]
@@ -540,7 +290,7 @@ let assert_hole (exp : Exp.exp) =
 let generate_exp (fuel : int) (prog : Exp.program) (e : Exp.exp_label) =
   let node = prog.get_exp e in
   assert_hole node.exp;
-  let hole = {
+  let hole : hole_info = {
     label=e;
     ty_label=node.ty;
     prev=node.prev;

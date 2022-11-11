@@ -130,10 +130,6 @@ type program = {
     new_params : extvar -> params_label;
     get_params : params_label -> var list;
     add_param : params_label -> var -> unit;
-    (* TODO: needed?
-    (* the node that contains this params label *)
-    (* params_prev : params_label -> exp_label; *)
-     *)
     (* all params labels that are associated with the given extvar *)
     extvar_params : extvar -> params_label list;
     params_extvar : params_label -> extvar;
@@ -148,6 +144,7 @@ type program = {
     extvar_args : extvar -> args_label list;
     args_extvar : args_label -> extvar;
 
+    (* FIXME *)
     rename_child : (exp_label * exp_label) -> exp_label -> unit;
   }
 
@@ -246,6 +243,7 @@ let make_program ?(std_lib = []) ty =
   let args_parent lab = ArgsLabel.Tbl.find args_parent_tbl lab in
 
   (* Justin: I hate this so much *)
+  (* Ben: a necessary evil *)
   let rename_child (a, b) e =
     let rename e' = if e' == a then b else e' in
 
