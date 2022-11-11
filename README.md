@@ -2,9 +2,9 @@
 
 Required:
 ```
-opam install utop
-dune
 ocaml
+dune
+utop (opam install utop)
 ```
 
 

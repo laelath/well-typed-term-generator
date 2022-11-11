@@ -8,46 +8,13 @@
    allowed; each node has exactly one reference.
  *)
 
-let choose (lst : 'a list) : 'a =
-  let i = Random.int (List.length lst) in
-  List.nth lst i
-
-let choose_split (lst : 'a list) : 'a * ('a list) =
-  let rec extract i lst =
-    let hd = List.hd lst in
-    if i == 0
-    then (hd, List.tl lst)
-    else let (a, lst') = extract (i - 1) (List.tl lst) in
-         (a, hd :: lst') in
-  extract (Random.int (List.length lst)) lst
-
-let choose_frequency (freqs : (int * 'a) list) : 'a =
-  let rec get_freq (freqs : (int * 'a) list) (i : int) : 'a =
-    let (n, a) = List.hd freqs in
-    if i < n
-    then a
-    else get_freq (List.tl freqs) (i - n) in
-
-  let n = List.fold_left (fun acc (m, _) -> acc + m) 0 freqs in
-  get_freq freqs (Random.int n)
-
-let choose_frequency_split (freqs : (int * 'a) list) : 'a * ((int * 'a) list) =
-  let rec extract_freq i lst =
-    let hd = List.hd lst in
-    if i < fst hd
-    then (snd hd, List.tl lst)
-    else let (a, lst') = extract_freq (i - fst hd) (List.tl lst) in
-         (a, hd :: lst') in
-  let n = List.fold_left (fun acc (m, _) -> acc + m) 0 freqs in
-  extract_freq (Random.int n) freqs
-
 type worklist = {
     pop : unit -> Exp.exp_label option;
     add : int * Exp.exp_label-> unit;
   }
 type state = {
     worklist : worklist;
-    mutable size : int;
+    mutable fuel : int;
   }
 type hole_info = {
     label : Exp.exp_label;
@@ -58,25 +25,30 @@ type hole_info = {
     depth : int;
   }
 
-let make_state (size : int) : state =
+let make_state (fuel : int) : state =
   let holes = ref [] in
   let pop () =
-    if List.length !holes == 0
-    then None
-    else let (hole, holes') = choose_frequency_split !holes in
-         holes := holes';
-         Some hole in
+    match !holes with
+    | [] -> None
+    | h ->
+       let (hole, holes') = Choose.choose_frequency_split h in
+       holes := holes';
+       Some hole in
+  let add e = holes := e :: !holes in
   {
-    size = size;
+    fuel = fuel;
     worklist = {
       pop = pop;
-      add = fun e -> holes := e :: !holes
+      add = add
     }
   }
 
 
 exception InternalError of string
 
+(*
+  UTIL
+ *)
 
 (* Implements the rule:
    E ~> E{alpha + tau}
@@ -176,6 +148,68 @@ let find_enclosing_lambdas (prog : Exp.program) (e : Exp.exp_label) : (Exp.param
   in
   find_enc node.prev []
 
+let exp_depth (prog : Exp.program) (e : Exp.exp_label) =
+  let rec exp_depth' e acc =
+    let node = prog.get_exp e in
+    match node.prev with
+    | None -> acc
+    | Some e' -> exp_depth' e' (acc + 1) in
+  exp_depth' e 0
+
+let rec find_pos (prog : Exp.program) (e : Exp.exp_label) (height : int) =
+  if height == 0
+  then e
+  else match (prog.get_exp e).prev with
+       | None -> e
+       | Some e' -> find_pos prog e' (height - 1)
+
+let is_list_ty (prog : Exp.program) ty =
+  match prog.get_ty ty with
+  | Exp.TyNdList _ -> true
+  | _ -> false
+
+(* TODO: pass full list of in-scope variables here *)
+let rec generate_type size (prog : Exp.program) =
+  prog.new_ty
+    ((Choose.choose_frequency
+        [(1, (fun _ -> Exp.TyNdBool)); (1, (fun _ -> Exp.TyNdInt));
+         (size, (fun _ -> Exp.TyNdList (generate_type (size - 1) prog)))])
+     ())
+
+let rec ty_label_from_ty prog mp ty =
+  match ty with
+  | Exp.TyVar var ->
+    (match List.assoc_opt var mp with
+     | None -> let tyl = generate_type 3 prog in
+               ((var, tyl) :: mp, tyl)
+     | Some tyl -> (mp, tyl))
+  | Exp.TyInt -> (mp, prog.new_ty Exp.TyNdInt)
+  | Exp.TyBool -> (mp, prog.new_ty Exp.TyNdBool)
+  | Exp.TyList ty' ->
+    let (mp, tyl') = ty_label_from_ty prog mp ty' in
+    (mp, prog.new_ty (Exp.TyNdList tyl'))
+  | Exp.TyArrow (tys, ty') ->
+    let (mp, tyl') = ty_label_from_ty prog mp ty' in
+    let (mp, tys') = List.fold_left_map (ty_label_from_ty prog) mp (List.rev tys) in
+    (mp, prog.new_ty (Exp.TyNdArrow (tys', tyl')))
+
+(* TODO: use this again *)
+let rec type_complexity (prog : Exp.program) (ty : Exp.ty_label) =
+  match prog.get_ty ty with
+  | Exp.TyNdBool -> 1
+  | Exp.TyNdInt -> 1
+  | Exp.TyNdList ty' -> 2 + type_complexity prog ty'
+  | Exp.TyNdArrow (params, ty') ->
+    List.fold_left
+      (fun acc ty'' -> acc + type_complexity prog ty'')
+      (1 + type_complexity prog ty')
+      params
+  | Exp.TyNdArrowExt (params, ty') ->
+    List.fold_left
+      (fun acc ty'' -> acc + type_complexity prog ty'')
+      (1 + type_complexity prog ty')
+      (prog.get_ty_params params)
+
 
 (*
   TRANSITIONS
@@ -250,22 +284,10 @@ let palka_rule_steps (prog : Exp.program) (hole : hole_info) =
   let funcs = List.filter (fun b -> Exp.is_func_producing prog hole.ty_label (snd b)) hole.vars in
   List.map palka_rule_step funcs
 
-
-let exp_depth (prog : Exp.program) (e : Exp.exp_label) =
-  let rec exp_depth' e acc =
-    let node = prog.get_exp e in
-    match node.prev with
-    | None -> acc
-    | Some e' -> exp_depth' e' (acc + 1) in
-  exp_depth' e 0
-
-let rec find_pos (prog : Exp.program) (e : Exp.exp_label) (height : int) =
-  if height == 0
-  then e
-  else match (prog.get_exp e).prev with
-       | None -> e
-       | Some e' -> find_pos prog e' (height - 1)
-
+(* Implements the rule:
+   FIXME
+   E[<>] ~> 
+ *)
 let let_insertion_steps (prog : Exp.program) (hole : hole_info) =
   let let_insertion_step height =
     (max 0 (hole.fuel - hole.depth),
@@ -289,6 +311,10 @@ let let_insertion_steps (prog : Exp.program) (hole : hole_info) =
 
 
 (* TODO: reduce redundancy *)
+(* Implements the rule:
+   FIXME
+   E[<>] ~> 
+ *)
 let match_insertion_steps (prog : Exp.program) (hole : hole_info) =
   let match_insertion_step height =
     (max 0 (hole.fuel - hole.depth),
@@ -337,11 +363,10 @@ let match_insertion_steps (prog : Exp.program) (hole : hole_info) =
   | _ -> []
 
 
-let is_list_ty (prog : Exp.program) ty =
-  match prog.get_ty ty with
-  | Exp.TyNdList _ -> true
-  | _ -> false
-
+(* Implements the rule:
+   FIXME
+   E[<>] ~> 
+ *)
 let create_match_steps (prog : Exp.program) (hole : hole_info) =
   let create_match_step (x, ty) =
     (hole.fuel,
@@ -375,7 +400,10 @@ let var_steps (prog : Exp.program) (hole : hole_info) =
   List.map var_step ref_vars
 
 
-(* Implements the rule *)
+(* Implements the rule:
+   FIXME
+   E[<>] ~> 
+ *)
 let create_if_steps (prog : Exp.program) (hole : hole_info) =
   [(hole.fuel,
     fun () ->
@@ -423,31 +451,10 @@ let find_std_lib_funcs prog tyl =
             | _ -> None)
     prog.std_lib
 
-(* TODO: pass full list of in-scope variables here *)
-let rec generate_type size (prog : Exp.program) =
-  prog.new_ty
-    ((choose_frequency
-        [(1, (fun _ -> Exp.TyNdBool)); (1, (fun _ -> Exp.TyNdInt));
-         (size, (fun _ -> Exp.TyNdList (generate_type (size - 1) prog)))])
-     ())
-
-let rec ty_label_from_ty prog mp ty =
-  match ty with
-  | Exp.TyVar var ->
-    (match List.assoc_opt var mp with
-     | None -> let tyl = generate_type 3 prog in
-               ((var, tyl) :: mp, tyl)
-     | Some tyl -> (mp, tyl))
-  | Exp.TyInt -> (mp, prog.new_ty Exp.TyNdInt)
-  | Exp.TyBool -> (mp, prog.new_ty Exp.TyNdBool)
-  | Exp.TyList ty' ->
-    let (mp, tyl') = ty_label_from_ty prog mp ty' in
-    (mp, prog.new_ty (Exp.TyNdList tyl'))
-  | Exp.TyArrow (tys, ty') ->
-    let (mp, tyl') = ty_label_from_ty prog mp ty' in
-    let (mp, tys') = List.fold_left_map (ty_label_from_ty prog) mp (List.rev tys) in
-    (mp, prog.new_ty (Exp.TyNdArrow (tys', tyl')))
-
+(* Implements the rule:
+   FIXME
+   E[<>] ~> 
+ *)
 let std_lib_palka_rule_steps (prog : Exp.program) (hole : hole_info) =
   let std_lib_palka_rule_step (f, tys, mp) =
     (hole.fuel, (* TODO: incorporate occurence amount here *)
@@ -461,23 +468,6 @@ let std_lib_palka_rule_steps (prog : Exp.program) (hole : hole_info) =
   in
   List.map std_lib_palka_rule_step (find_std_lib_funcs prog hole.ty_label)
 
-
-(* TODO: use this again *)
-let rec type_complexity (prog : Exp.program) (ty : Exp.ty_label) =
-  match prog.get_ty ty with
-  | Exp.TyNdBool -> 1
-  | Exp.TyNdInt -> 1
-  | Exp.TyNdList ty' -> 2 + type_complexity prog ty'
-  | Exp.TyNdArrow (params, ty') ->
-    List.fold_left
-      (fun acc ty'' -> acc + type_complexity prog ty'')
-      (1 + type_complexity prog ty')
-      params
-  | Exp.TyNdArrowExt (params, ty') ->
-    List.fold_left
-      (fun acc ty'' -> acc + type_complexity prog ty'')
-      (1 + type_complexity prog ty')
-      (prog.get_ty_params params)
 
 (* Implements the rule:
    E[<>] ~> E[dcon <> ... <>]
@@ -527,11 +517,6 @@ let constructor_steps (prog : Exp.program) (hole : hole_info) =
    MAIN LOOP
  *)
 
-let assert_hole (exp : Exp.exp) =
-  match exp with
-  | Exp.Hole -> ()
-  | _ -> raise (InternalError "exp is not a hole")
-
 let step_generators : (Exp.program -> hole_info -> (int * (unit -> Exp.exp_label list)) list) list =
   [
     constructor_steps;
@@ -547,6 +532,11 @@ let step_generators : (Exp.program -> hole_info -> (int * (unit -> Exp.exp_label
     not_useless_steps;
   ]
 
+let assert_hole (exp : Exp.exp) =
+  match exp with
+  | Exp.Hole -> ()
+  | _ -> raise (InternalError "exp is not a hole")
+
 let generate_exp (fuel : int) (prog : Exp.program) (e : Exp.exp_label) =
   let node = prog.get_exp e in
   assert_hole node.exp;
@@ -559,22 +549,22 @@ let generate_exp (fuel : int) (prog : Exp.program) (e : Exp.exp_label) =
     depth=exp_depth prog e;
   } in
   let steps = List.concat_map (fun g -> g prog hole) step_generators in
-  (choose_frequency steps) ()
+  (Choose.choose_frequency steps) ()
 
 let generate (st : state) (prog : Exp.program) : bool =
   match st.worklist.pop () with
   | None -> false
   | Some e ->
-    let holes = generate_exp st.size prog e in
-    List.iter (fun hole -> st.worklist.add (st.size + 1, hole)) holes;
+    let holes = generate_exp st.fuel prog e in
+    List.iter (fun hole -> st.worklist.add (st.fuel + 1, hole)) holes;
     Exp.check prog;
-    st.size <- if st.size > 0 then st.size - 1 else 0;
+    st.fuel <- if st.fuel > 0 then st.fuel - 1 else 0;
     true
 
 let generate_fp ?(std_lib = []) (size : int) (ty : Exp.ty) : Exp.program =
   let prog = Exp.make_program ~std_lib: std_lib ty in
   let st = make_state size in
-  st.worklist.add (st.size, prog.head);
+  st.worklist.add (st.fuel, prog.head);
   let rec lp () =
     match generate st prog with
     | false -> prog
