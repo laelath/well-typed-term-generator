@@ -287,6 +287,8 @@ let assert_hole (exp : Exp.exp) =
   | Exp.Hole -> ()
   | _ -> raise (InternalError "exp is not a hole")
 
+let sample n = Random.int n
+
 let generate_exp (fuel : int) (prog : Exp.program) (e : Exp.exp_label) =
   let node = prog.get_exp e in
   assert_hole node.exp;
@@ -299,6 +301,7 @@ let generate_exp (fuel : int) (prog : Exp.program) (e : Exp.exp_label) =
     depth=exp_depth prog e;
   } in
   let steps = List.concat_map (fun g -> g prog hole) step_generators in
+  (* (Urn.sample sample steps) () *)
   (Choose.choose_frequency steps) ()
 
 let generate (st : state) (prog : Exp.program) : bool =
