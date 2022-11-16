@@ -50,7 +50,7 @@ let sample n = Random.int n
 
 let generate_exp (steps : Generators.t) (fuel : int) (prog : Exp.program) (e : Exp.exp_label) =
   let node = prog.get_exp e in
-  assert_hole node.exp;
+  Debug.run (fun () -> assert_hole node.exp);
   let hole : hole_info = {
     label=e;
     ty_label=node.ty;
@@ -68,7 +68,7 @@ let generate (steps : Generators.t) (st : state) (prog : Exp.program) : bool =
   | Some e ->
     let holes = generate_exp steps st.fuel prog e in
     List.iter (fun hole -> st.worklist.add (st.fuel + 1, hole)) holes;
-    Exp.check prog;
+    Debug.run (fun () -> Exp.check prog);
     st.fuel <- if st.fuel > 0 then st.fuel - 1 else 0;
     true
 

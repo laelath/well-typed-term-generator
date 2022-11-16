@@ -208,7 +208,12 @@ let constructor_steps (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
   in
 
   let const_set exp msg acc =
-    Urn.insert acc 1 (Urn.Value (fun () -> Printf.eprintf ("creating %s\n") msg; set exp; [])) in
+    let f = 
+      fun () ->
+      Debug.run (fun () -> Printf.eprintf ("creating %s\n") msg);
+      set exp; 
+      [] in
+    Urn.insert acc 1 (Urn.Value f) in
 
   match prog.get_ty hole.ty_label with
   | TyNdBool ->
@@ -221,7 +226,7 @@ let constructor_steps (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
      let acc = const_set Exp.Empty "empty" acc in
      let cons = 
        fun () ->
-       Printf.eprintf ("creating cons\n");
+       Debug.run (fun () -> Printf.eprintf ("creating cons\n"));
        let lhole = prog.new_exp {exp=Exp.Hole; ty=hole.ty_label; prev=Some hole.label} in
        let ehole = prog.new_exp {exp=Exp.Hole; ty=ty'; prev=Some hole.label} in
        set (Exp.Cons (ehole, lhole));
@@ -230,7 +235,7 @@ let constructor_steps (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
   | TyNdArrow (ty_params, ty') ->
      let func = 
        fun () ->
-       Printf.eprintf ("creating lambda\n");
+       Debug.run (fun () -> Printf.eprintf ("creating lambda\n"));
        let xs = List.map (fun _ -> prog.new_var ()) ty_params in
        let body = prog.new_exp {exp=Exp.Hole; ty=ty'; prev=Some hole.label} in
        set (Exp.Lambda (xs, body));
@@ -239,7 +244,7 @@ let constructor_steps (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
   | TyNdArrowExt (ty_params, ty') ->
      let func = 
        fun () ->
-       Printf.eprintf ("creating ext. lambda\n");
+       Debug.run (fun () -> Printf.eprintf ("creating ext. lambda\n"));
        let extvar = prog.ty_params_extvar ty_params in
        let params = prog.new_params extvar in
        let xs = List.map (fun _ -> prog.new_var ()) (prog.get_ty_params ty_params) in

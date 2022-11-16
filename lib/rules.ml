@@ -106,7 +106,7 @@ let extend_extvar (prog : Exp.program) (extvar : Exp.extvar) (ext_ty : Exp.ty_la
  *)
 let not_useless_step (prog : Exp.program) (hole : hole_info) param =
   fun () ->
-  Printf.eprintf ("extending ext. var\n");
+  Debug.run (fun () -> Printf.eprintf ("extending ext. var\n"));
   let extvar = prog.params_extvar param in
   let holes = extend_extvar prog extvar hole.ty_label in
   let x = List.hd (prog.get_params param) in
@@ -119,7 +119,7 @@ let not_useless_step (prog : Exp.program) (hole : hole_info) param =
  *)
 let ext_function_call_steps (prog : Exp.program) (hole : hole_info)  =
   fun () ->
-  Printf.eprintf ("creating ext. function call\n");
+  Debug.run (fun () -> Printf.eprintf ("creating ext. function call\n"));
   let extvar = prog.new_extvar() in
   let f_ty = prog.new_ty (Exp.TyNdArrowExt (prog.new_ty_params extvar, hole.ty_label)) in
   let f = prog.new_exp {exp=Exp.Hole; ty=f_ty; prev=Some hole.label} in
@@ -134,7 +134,7 @@ let ext_function_call_steps (prog : Exp.program) (hole : hole_info)  =
  *)
 let palka_rule_step (prog : Exp.program) (hole : hole_info) (f, f_ty) =
   fun () ->
-  Printf.eprintf ("creating palka function call\n");
+  Debug.run (fun () -> Printf.eprintf ("creating palka function call\n"));
   let fe = prog.new_exp {exp=Exp.Var f; ty=f_ty; prev=Some hole.label} in
   match (prog.get_ty f_ty) with
   | Exp.TyNdArrowExt (ty_params, _) ->
@@ -160,7 +160,7 @@ let palka_rule_step (prog : Exp.program) (hole : hole_info) (f, f_ty) =
  *)
 let let_insertion_step (prog : Exp.program) (hole : hole_info) height =
   fun () ->
-  Printf.eprintf ("inserting let\n");
+  Debug.run (fun () -> Printf.eprintf ("inserting let\n"));
   let e' = find_pos prog hole.label height in
   let node' = prog.get_exp e' in
   let x = prog.new_var () in
@@ -183,7 +183,7 @@ let let_insertion_step (prog : Exp.program) (hole : hole_info) height =
  *)
 let match_insertion_step (prog : Exp.program) (hole : hole_info) height =
   fun () ->
-  Printf.eprintf ("inserting match (fst)\n");
+  Debug.run (fun () -> Printf.eprintf ("inserting match (fst)\n"));
   let e' = find_pos prog hole.label height in
   let node' = prog.get_exp e' in
   let e_match = prog.new_exp {exp=Exp.Hole; ty=node'.ty; prev=node'.prev} in
@@ -207,7 +207,7 @@ let match_insertion_step (prog : Exp.program) (hole : hole_info) height =
  *)
 let match_insertion_list_step (prog : Exp.program) (hole : hole_info) height =
   fun () ->
-  Printf.eprintf ("inserting match (rst)\n");
+  Debug.run (fun () -> Printf.eprintf ("inserting match (rst)\n"));
   let e' = find_pos prog hole.label height in
   let node' = prog.get_exp e' in
   let e_match = prog.new_exp {exp=Exp.Hole; ty=node'.ty; prev=node'.prev} in
@@ -231,7 +231,7 @@ let match_insertion_list_step (prog : Exp.program) (hole : hole_info) height =
  *)
 let create_match_step (prog : Exp.program) (hole : hole_info) (x, ty) =
   fun () ->
-  Printf.eprintf ("creating match\n");
+  Debug.run (fun () -> Printf.eprintf ("creating match\n"));
   let e_scr = prog.new_exp {exp=Exp.Var x; ty=ty; prev=Some hole.label} in
   let e_empty = prog.new_exp {exp=Exp.Hole; ty=hole.ty_label; prev=Some hole.label} in
   let e_cons = prog.new_exp {exp=Exp.Hole; ty=hole.ty_label; prev=Some hole.label} in
@@ -248,7 +248,7 @@ let create_match_step (prog : Exp.program) (hole : hole_info) (x, ty) =
 (* TODO: increase the chance of variable reference for complex types? *)
 let var_step (prog : Exp.program) (hole : hole_info) (var, _) =
   fun () ->
-  Printf.eprintf ("creating var reference\n");
+  Debug.run (fun () -> Printf.eprintf ("creating var reference\n"));
   prog.set_exp hole.label {exp=Exp.Var var; ty=hole.ty_label; prev=hole.prev};
   []
 
@@ -259,7 +259,7 @@ let var_step (prog : Exp.program) (hole : hole_info) (var, _) =
  *)
 let create_if_steps (prog : Exp.program) (hole : hole_info)  =
   fun () ->
-  Printf.eprintf ("creating if\n");
+  Debug.run (fun () -> Printf.eprintf ("creating if\n"));
   let pred = prog.new_exp {exp=Exp.Hole; ty=prog.new_ty Exp.TyNdBool; prev=Some hole.label} in
   let thn = prog.new_exp {exp=Exp.Hole; ty=hole.ty_label; prev=Some hole.label} in
   let els = prog.new_exp {exp=Exp.Hole; ty=hole.ty_label; prev=Some hole.label} in
@@ -274,7 +274,7 @@ let create_if_steps (prog : Exp.program) (hole : hole_info)  =
  *)
 let std_lib_step (prog : Exp.program) (hole : hole_info) x =
   fun () ->
-  Printf.eprintf ("creating std lib reference: %s\n") x;
+  Debug.run (fun () -> Printf.eprintf ("creating std lib reference: %s\n") x);
   prog.set_exp hole.label {exp=Exp.StdLibRef x; ty=hole.ty_label; prev=hole.prev};
   []
 
@@ -285,7 +285,7 @@ let std_lib_step (prog : Exp.program) (hole : hole_info) x =
  *)
 let std_lib_palka_rule_step (prog : Exp.program) (hole : hole_info) (f, tys, mp) =
   fun () ->
-  Printf.eprintf ("creating std lib palka call: %s\n") f;
+  Debug.run (fun () -> Printf.eprintf ("creating std lib palka call: %s\n") f);
   let (_, tyls) = List.fold_left_map (ty_label_from_ty prog) mp (List.rev tys) in
   let holes = List.map (fun tyl -> prog.new_exp {exp=Exp.Hole; ty=tyl; prev=Some hole.label}) tyls in
   let func = prog.new_exp {exp=Exp.StdLibRef f; ty=prog.new_ty (Exp.TyNdArrow (tyls, hole.ty_label)); prev=Some hole.label} in
