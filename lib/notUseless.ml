@@ -138,44 +138,66 @@ let is_list_ty (prog : Exp.program) ty =
 let weight_fuel1 (hole : hole_info) = hole.fuel+1
 let weight_fuel0 (hole : hole_info) = hole.fuel+0
 
-let not_useless_steps (prog : Exp.program) (hole : hole_info) =
+type rule_urn = (unit -> Exp.exp_label list) Urn.t
+
+let steps_generator (prog : Exp.program) (hole : hole_info) (acc : rule_urn)
+                    (rule : Exp.program -> hole_info -> 'a -> unit -> Exp.exp_label list)
+                    (weight : hole_info -> int)
+                    (collection : 'a list) = 
+  List.fold_left (fun acc a ->
+                  Urn.insert acc (weight hole) (Urn.Value (rule prog hole a)))
+             acc collection
+
+let steps_bucket_generator (prog : Exp.program) (hole : hole_info) (acc : rule_urn)
+                           (rule : Exp.program -> hole_info -> 'a -> unit -> Exp.exp_label list)
+                           (weight : hole_info -> int)
+                           (collection : 'a list) 
+                           (w : int) = 
+  let nested = fun () -> steps_generator prog hole Urn.empty rule weight collection in
+  Urn.insert acc w (Urn.Nested nested)
+
+let singleton_generator weight f prog hole acc =
+  Urn.insert acc (weight hole) (Urn.Value (f prog hole))
+
+
+
+let not_useless_steps (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
   let params = find_enclosing_lambdas prog hole.label in
-  List.map (Rules.not_useless_step prog hole weight_fuel1)
-           params
+  steps_generator prog hole acc
+                  Rules.not_useless_step weight_fuel1 params
 
-let palka_rule_steps (prog : Exp.program) (hole : hole_info) =
+let palka_rule_steps (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
   let funcs = List.filter (fun b -> Exp.is_func_producing prog hole.ty_label (snd b)) hole.vars in
-  List.map (Rules.palka_rule_step prog hole weight_fuel0)
-           funcs
+  steps_generator prog hole acc
+                  Rules.palka_rule_step weight_fuel0 funcs
 
-let let_insertion_steps (prog : Exp.program) (hole : hole_info) =
+let let_insertion_steps (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
   let weight (hole : hole_info) = max 0 (hole.fuel - hole.depth) in
-  List.map (Rules.let_insertion_step prog hole weight)
-           (List.init (hole.depth + 1) (fun x -> x))
+  steps_generator prog hole acc
+                  Rules.let_insertion_step weight (List.init (hole.depth + 1) (fun x -> x))
 
-
-let match_insertion_steps (prog : Exp.program) (hole : hole_info) =
+let match_insertion_steps (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
   let weight (hole : hole_info) = max 0 (hole.fuel - hole.depth) in
   let all_depths = List.init (hole.depth + 1) (fun x -> x) in
-  List.map (Rules.match_insertion_step prog hole weight) 
-           all_depths
-  @
+  let acc = steps_generator prog hole acc
+                            Rules.match_insertion_step weight all_depths in
   match prog.get_ty hole.ty_label with
-  | TyNdList _ -> List.map (Rules.match_insertion_list_step prog hole weight)
-                           all_depths
-  | _ -> []
+  | TyNdList _ -> 
+     steps_generator prog hole acc
+                     Rules.match_insertion_list_step weight all_depths
+  | _ -> acc
 
 
-let create_match_steps (prog : Exp.program) (hole : hole_info) =
+let create_match_steps (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
   let lists = List.filter (fun b -> is_list_ty prog (snd b)) hole.vars in
-  List.map (Rules.create_match_step prog hole weight_fuel0) lists
+  steps_generator prog hole acc
+                  Rules.create_match_step weight_fuel0 lists 
 
-let var_steps (prog : Exp.program) (hole : hole_info) =
+let var_steps (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
   let weight _ = 1 in
   let ref_vars = List.filter (fun b -> Exp.is_same_ty prog (snd b) hole.ty_label) hole.vars in
-  List.map (Rules.var_step prog hole weight) ref_vars
-
-
+  steps_generator prog hole acc
+                  Rules.var_step weight ref_vars 
 
 
 (* std_lib objects specify an occurence amount,
@@ -188,12 +210,12 @@ let find_std_lib_refs prog tyl =
        else Option.map (fun _ -> x) (Exp.ty_compat_ty_label prog ty tyl []))
     prog.std_lib
 
-let std_lib_steps (prog : Exp.program) (hole : hole_info) =
+let std_lib_steps (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
   let valid_refs = find_std_lib_refs prog hole.ty_label in
+  (* TODO: incorporate occurence amount here *)
   let weight _ = 1 in
-  List.map (Rules.std_lib_step weight prog hole) valid_refs
-
-
+  steps_generator prog hole acc
+                  Rules.std_lib_step weight valid_refs
 
 (* finds all functions in the standard library that can produce tyl *)
 let find_std_lib_funcs prog tyl =
@@ -210,74 +232,79 @@ let find_std_lib_funcs prog tyl =
     prog.std_lib
 
 
-let std_lib_palka_rule_steps (prog : Exp.program) (hole : hole_info) =
-  List.map (Rules.std_lib_palka_rule_step weight_fuel0 prog hole)
-           (find_std_lib_funcs prog hole.ty_label)
+let std_lib_palka_rule_steps (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
+  let valid_refs = find_std_lib_funcs prog hole.ty_label in
+  (* TODO: incorporate occurence amount here *)
+  steps_generator prog hole acc
+                  Rules.std_lib_palka_rule_step weight_fuel0 valid_refs
 
 (* Implements the rule:
    E[<>] ~> E[dcon <> ... <>]
  *)
 (* FIXME factor this *)
-let constructor_steps (prog : Exp.program) (hole : hole_info) =
+let constructor_steps (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
   let set exp =
     prog.set_exp hole.label {exp=exp; ty=hole.ty_label; prev=hole.prev}
   in
 
-  let const_set exp msg =
-    (1, fun () -> Printf.eprintf ("creating %s\n") msg; set exp; []) in
+  let const_set exp msg acc =
+    Urn.insert acc 1 (Urn.Value (fun () -> Printf.eprintf ("creating %s\n") msg; set exp; [])) in
 
   match prog.get_ty hole.ty_label with
-  | TyNdBool -> [const_set (Exp.ValBool true) "true"; const_set (Exp.ValBool false) "false"]
-  | TyNdInt -> List.init 5 (fun n -> const_set (Exp.ValInt n) (Int.to_string n))
+  | TyNdBool ->
+     let acc = const_set (Exp.ValBool true) "true" acc in
+     let acc = const_set (Exp.ValBool false) "false" acc in
+     acc
+  | TyNdInt -> List.fold_left (fun acc n -> const_set (Exp.ValInt n) (Int.to_string n) acc)
+                              acc (List.init 5 (fun n -> n))
   | TyNdList ty' ->
-    [const_set Exp.Empty "empty";
-     (hole.fuel,
-      fun () ->
-        Printf.eprintf ("creating cons\n");
-        let lhole = prog.new_exp {exp=Exp.Hole; ty=hole.ty_label; prev=Some hole.label} in
-        let ehole = prog.new_exp {exp=Exp.Hole; ty=ty'; prev=Some hole.label} in
-        set (Exp.Cons (ehole, lhole));
-        [ehole; lhole])]
+     let acc = const_set Exp.Empty "empty" acc in
+     let cons = 
+       fun () ->
+       Printf.eprintf ("creating cons\n");
+       let lhole = prog.new_exp {exp=Exp.Hole; ty=hole.ty_label; prev=Some hole.label} in
+       let ehole = prog.new_exp {exp=Exp.Hole; ty=ty'; prev=Some hole.label} in
+       set (Exp.Cons (ehole, lhole));
+       [ehole; lhole] in
+     Urn.insert acc hole.fuel (Urn.Value cons)
   | TyNdArrow (ty_params, ty') ->
-    [(1 + hole.fuel,
-      fun () ->
-        Printf.eprintf ("creating lambda\n");
-        let xs = List.map (fun _ -> prog.new_var ()) ty_params in
-        let body = prog.new_exp {exp=Exp.Hole; ty=ty'; prev=Some hole.label} in
-        set (Exp.Lambda (xs, body));
-        [body])]
+     let func = 
+       fun () ->
+       Printf.eprintf ("creating lambda\n");
+       let xs = List.map (fun _ -> prog.new_var ()) ty_params in
+       let body = prog.new_exp {exp=Exp.Hole; ty=ty'; prev=Some hole.label} in
+       set (Exp.Lambda (xs, body));
+       [body] in
+     Urn.insert acc (1 + hole.fuel) (Urn.Value func)
   | TyNdArrowExt (ty_params, ty') ->
-    [(1 + hole.fuel,
-      fun () ->
-        Printf.eprintf ("creating ext. lambda\n");
-        let extvar = prog.ty_params_extvar ty_params in
-        let params = prog.new_params extvar in
-        let xs = List.map (fun _ -> prog.new_var ()) (prog.get_ty_params ty_params) in
-        List.iter (prog.add_param params) xs;
-        let body = prog.new_exp {exp=Exp.Hole; ty=ty'; prev=Some hole.label} in
-        set (Exp.ExtLambda (params, body));
-        [body])]
-
-
+     let func = 
+       fun () ->
+       Printf.eprintf ("creating ext. lambda\n");
+       let extvar = prog.ty_params_extvar ty_params in
+       let params = prog.new_params extvar in
+       let xs = List.map (fun _ -> prog.new_var ()) (prog.get_ty_params ty_params) in
+       List.iter (prog.add_param params) xs;
+       let body = prog.new_exp {exp=Exp.Hole; ty=ty'; prev=Some hole.label} in
+       set (Exp.ExtLambda (params, body));
+       [body] in
+     Urn.insert acc (1 + hole.fuel) (Urn.Value func)
 (*
    MAIN LOOP
  *)
 
-let singleton f prog hole = [f prog hole]
-
 let not_use_for_base (hole : hole_info) = if hole.fuel = 0 then 0 else 1
 
-let step_generators : (Exp.program -> hole_info -> (int * (unit -> Exp.exp_label list)) list) list =
+let step_generators : ((Exp.program -> hole_info -> rule_urn -> rule_urn) list) =
   [
     constructor_steps;
     var_steps;
     std_lib_steps;
     std_lib_palka_rule_steps;
-    singleton (Rules.ext_function_call_steps weight_fuel0);
+    singleton_generator weight_fuel0 Rules.ext_function_call_steps;
     let_insertion_steps;
     match_insertion_steps;
     create_match_steps;
-    singleton (Rules.create_if_steps weight_fuel0);
+    singleton_generator weight_fuel0 Rules.create_if_steps;
     palka_rule_steps;
     not_useless_steps;
   ]
@@ -300,9 +327,8 @@ let generate_exp (fuel : int) (prog : Exp.program) (e : Exp.exp_label) =
     vars=find_vars prog e;
     depth=exp_depth prog e;
   } in
-  let steps = List.concat_map (fun g -> g prog hole) step_generators in
-  (* (Urn.sample sample steps) () *)
-  (Choose.choose_frequency steps) ()
+  let steps = List.fold_left (fun acc g -> g prog hole acc) Urn.empty step_generators in
+  (Urn.sample sample steps) ()
 
 let generate (st : state) (prog : Exp.program) : bool =
   match st.worklist.pop () with
