@@ -120,7 +120,7 @@ let haskell_std_lib =
   ]
 
 let generate_palka size =
-  NotUseless.generate_fp Generators.main ~std_lib:haskell_std_lib size (Exp.TyArrow ([Exp.TyList Exp.TyInt], (Exp.TyList Exp.TyInt)))
+  Generate.generate_fp Generators.main ~std_lib:haskell_std_lib size (Exp.TyArrow ([Exp.TyList Exp.TyInt], (Exp.TyList Exp.TyInt)))
 
 let generate_palka_batch batch size =
   let rec gen_batch batch acc =
