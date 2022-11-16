@@ -24,8 +24,7 @@ to debug:
 ```
 dune utop
 ...
-let p = NotUseless.generate_fp Generators.main 100 Exp.TyInt in PrettyPrinter.pretty_print p;;
-let p = NotUseless.generate_fp Generators.main 100 Exp.TyInt in HaskellPrinter.print p;;
+let p = Generate.generate_fp Generators.main 100 Exp.TyInt in PrettyPrinter.pretty_print p;;
 ```
 
 
