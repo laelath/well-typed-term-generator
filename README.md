@@ -24,8 +24,11 @@ to debug:
 ```
 dune utop
 ...
+let debug_mode := true;;
 let p = Generate.generate_fp Generators.main 100 Exp.TyInt in PrettyPrinter.pretty_print p;;
 ```
+
+
 
 
 notes:
