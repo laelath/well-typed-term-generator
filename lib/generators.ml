@@ -1,4 +1,11 @@
 
+(* TODO: 
+   - remove from Urn
+   - on Urn insert check if weight is 0
+   - factor out constructor steps (can we avoid duplicating of type check?)
+   - 
+ *)
+
 (*
   UTIL
  *)
@@ -95,9 +102,6 @@ let is_list_ty (prog : Exp.program) ty =
   TRANSITIONS
  *)
 
-let weight_fuel1 (hole : hole_info) = hole.fuel+1
-let weight_fuel0 (hole : hole_info) = hole.fuel+0
-
 type rule_urn = (unit -> Exp.exp_label list) Urn.t
 
 let steps_generator (prog : Exp.program) (hole : hole_info) (acc : rule_urn)
@@ -121,23 +125,21 @@ let singleton_generator weight f prog hole acc =
 
 
 
-let not_useless_steps (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
+let not_useless_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
   let params = find_enclosing_lambdas prog hole.label in
   steps_generator prog hole acc
-                  Rules.not_useless_step weight_fuel1 params
+                  Rules.not_useless_step weight params
 
-let palka_rule_steps (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
+let palka_rule_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
   let funcs = List.filter (fun b -> Exp.is_func_producing prog hole.ty_label (snd b)) hole.vars in
   steps_generator prog hole acc
-                  Rules.palka_rule_step weight_fuel0 funcs
+                  Rules.palka_rule_step weight funcs
 
-let let_insertion_steps (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
-  let weight (hole : hole_info) = max 0 (hole.fuel - hole.depth) in
+let let_insertion_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
   steps_generator prog hole acc
                   Rules.let_insertion_step weight (List.init (hole.depth + 1) (fun x -> x))
 
-let match_insertion_steps (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
-  let weight (hole : hole_info) = max 0 (hole.fuel - hole.depth) in
+let match_insertion_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
   let all_depths = List.init (hole.depth + 1) (fun x -> x) in
   let acc = steps_generator prog hole acc
                             Rules.match_insertion_step weight all_depths in
@@ -148,13 +150,12 @@ let match_insertion_steps (prog : Exp.program) (hole : hole_info) (acc : rule_ur
   | _ -> acc
 
 
-let create_match_steps (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
+let create_match_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
   let lists = List.filter (fun b -> is_list_ty prog (snd b)) hole.vars in
   steps_generator prog hole acc
-                  Rules.create_match_step weight_fuel0 lists 
+                  Rules.create_match_step weight lists 
 
-let var_steps (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
-  let weight _ = 1 in
+let var_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
   let ref_vars = List.filter (fun b -> Exp.is_same_ty prog (snd b) hole.ty_label) hole.vars in
   steps_generator prog hole acc
                   Rules.var_step weight ref_vars 
@@ -170,10 +171,9 @@ let find_std_lib_refs prog tyl =
        else Option.map (fun _ -> x) (Exp.ty_compat_ty_label prog ty tyl []))
     prog.std_lib
 
-let std_lib_steps (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
+let std_lib_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
   let valid_refs = find_std_lib_refs prog hole.ty_label in
   (* TODO: incorporate occurence amount here *)
-  let weight _ = 1 in
   steps_generator prog hole acc
                   Rules.std_lib_step weight valid_refs
 
@@ -192,29 +192,28 @@ let find_std_lib_funcs prog tyl =
     prog.std_lib
 
 
-let std_lib_palka_rule_steps (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
+let std_lib_palka_rule_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
   let valid_refs = find_std_lib_funcs prog hole.ty_label in
   (* TODO: incorporate occurence amount here *)
   steps_generator prog hole acc
-                  Rules.std_lib_palka_rule_step weight_fuel0 valid_refs
+                  Rules.std_lib_palka_rule_step weight valid_refs
 
 (* Implements the rule:
    E[<>] ~> E[dcon <> ... <>]
  *)
-(* FIXME factor this *)
-let constructor_steps (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
+let data_constructor_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
+  (* FUTURE: loop over data constructors for type each gets a rule *)
+  (* FUTURE: disincentivize nested data constructors. Maybe these rules all get weight 1, and there's a seperate rule for data cons that add holes that gets a higher weight when not nested. *)
   let set exp =
     prog.set_exp hole.label {exp=exp; ty=hole.ty_label; prev=hole.prev}
   in
-
   let const_set exp msg acc =
     let f = 
       fun () ->
       Debug.run (fun () -> Printf.eprintf ("creating %s\n") msg);
       set exp; 
       [] in
-    Urn.insert acc 1 (Urn.Value f) in
-
+    Urn.insert acc (weight hole) (Urn.Value f) in
   match prog.get_ty hole.ty_label with
   | TyNdBool ->
      let acc = const_set (Exp.ValBool true) "true" acc in
@@ -231,7 +230,17 @@ let constructor_steps (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
        let ehole = prog.new_exp {exp=Exp.Hole; ty=ty'; prev=Some hole.label} in
        set (Exp.Cons (ehole, lhole));
        [ehole; lhole] in
-     Urn.insert acc hole.fuel (Urn.Value cons)
+     Urn.insert acc (weight hole) (Urn.Value cons)
+  | _ -> acc
+
+(* Implements the rule:
+   E[<>] ~> E[lambda ... <>]
+ *)
+let func_constructor_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
+  let set exp =
+    prog.set_exp hole.label {exp=exp; ty=hole.ty_label; prev=hole.prev}
+  in
+  match prog.get_ty hole.ty_label with
   | TyNdArrow (ty_params, ty') ->
      let func = 
        fun () ->
@@ -240,7 +249,7 @@ let constructor_steps (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
        let body = prog.new_exp {exp=Exp.Hole; ty=ty'; prev=Some hole.label} in
        set (Exp.Lambda (xs, body));
        [body] in
-     Urn.insert acc (1 + hole.fuel) (Urn.Value func)
+     Urn.insert acc (weight hole) (Urn.Value func)
   | TyNdArrowExt (ty_params, ty') ->
      let func = 
        fun () ->
@@ -252,22 +261,43 @@ let constructor_steps (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
        let body = prog.new_exp {exp=Exp.Hole; ty=ty'; prev=Some hole.label} in
        set (Exp.ExtLambda (params, body));
        [body] in
-     Urn.insert acc (1 + hole.fuel) (Urn.Value func)
-
+     Urn.insert acc (weight hole) (Urn.Value func)
+  | _ -> acc
 
 type t = ((Exp.program -> hole_info -> rule_urn -> rule_urn) list)
 
+let w_const (_ : hole_info) = 1
+let w_fuel (hole : hole_info) = hole.fuel+1
+let w_fuel_depth (hole : hole_info) = max 1 (hole.fuel - hole.depth)
+
+let not_base weight (hole : hole_info) =
+  if hole.fuel = 0
+  then 0
+  else weight hole
+
+let s rule weight =
+  singleton_generator weight rule
+
 let main : t =
   [
-    constructor_steps;
-    var_steps;
-    std_lib_steps;
-    std_lib_palka_rule_steps;
-    singleton_generator weight_fuel0 Rules.ext_function_call_steps;
-    let_insertion_steps;
-    match_insertion_steps;
-    create_match_steps;
-    singleton_generator weight_fuel0 Rules.create_if_steps;
-    palka_rule_steps;
-    not_useless_steps;
+    (* RULE TYPE *)                     (* IS BASE CASE? *)   (* WEIGHT *)
+    data_constructor_steps             (                        w_const          );
+    func_constructor_steps             (                        w_fuel           );
+    var_steps                          (                        w_const          );
+    (* --------------------------------------------------------------------------*)
+    std_lib_steps                      (                        w_const          );
+    std_lib_palka_rule_steps           (     not_base           w_fuel           );
+    (* --------------------------------------------------------------------------*)
+    s Rules.ext_function_call_step     (     not_base           w_fuel           );
+    (* --------------------------------------------------------------------------*)
+    let_insertion_steps                (     not_base           w_fuel_depth     );
+    (* --------------------------------------------------------------------------*)
+    match_insertion_steps              (     not_base           w_fuel_depth     );
+    create_match_steps                 (     not_base           w_fuel           );
+    (* --------------------------------------------------------------------------*)
+    s Rules.create_if_step             (     not_base           w_fuel           );
+    (* --------------------------------------------------------------------------*)
+    palka_rule_steps                   (     not_base           w_fuel           );
+    (* --------------------------------------------------------------------------*)
+    not_useless_steps                  (                        w_fuel           );
   ]

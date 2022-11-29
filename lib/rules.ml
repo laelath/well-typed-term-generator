@@ -117,7 +117,7 @@ let not_useless_step (prog : Exp.program) (hole : hole_info) param =
 (* Implements the rule:
    E[<>] ~> E[call <> alpha] where alpha is fresh
  *)
-let ext_function_call_steps (prog : Exp.program) (hole : hole_info)  =
+let ext_function_call_step (prog : Exp.program) (hole : hole_info)  =
   fun () ->
   Debug.run (fun () -> Printf.eprintf ("creating ext. function call\n"));
   let extvar = prog.new_extvar() in
@@ -257,7 +257,7 @@ let var_step (prog : Exp.program) (hole : hole_info) (var, _) =
    FIXME
    E[<>] ~> 
  *)
-let create_if_steps (prog : Exp.program) (hole : hole_info)  =
+let create_if_step (prog : Exp.program) (hole : hole_info)  =
   fun () ->
   Debug.run (fun () -> Printf.eprintf ("creating if\n"));
   let pred = prog.new_exp {exp=Exp.Hole; ty=prog.new_ty Exp.TyNdBool; prev=Some hole.label} in
@@ -293,4 +293,15 @@ let std_lib_palka_rule_step (prog : Exp.program) (hole : hole_info) (f, tys, mp)
   holes
 
 
+let set_step (prog : Exp.program) (hole : hole_info) exp =
+  prog.set_exp hole.label {exp=exp; ty=hole.ty_label; prev=hole.prev};
+  []
 
+(*
+let const_bool (prog : Exp.program) (hole : hole_info) = 
+  match prog.get_ty hole.ty_label with
+  | TyNdBool ->
+     fun () ->
+     set (Exp.ValBool true)
+  raise InternalError "const_bool not given bool hole" 
+     *)
