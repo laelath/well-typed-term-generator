@@ -72,7 +72,7 @@ let generate (steps : Generators.t) (st : state) (prog : Exp.program) : bool =
     st.fuel <- if st.fuel > 0 then st.fuel - 1 else 0;
     true
 
-let generate_fp (steps : Generators.t) ?(std_lib = []) (size : int) (ty : Exp.ty) : Exp.program =
+let generate_fp (steps : Generators.t) ?(std_lib = []) (size : int) (ty : Type.flat_ty) : Exp.program =
   let prog = Exp.make_program ~std_lib: std_lib ty in
   let st = make_state size in
   st.worklist.add (st.fuel, prog.head);

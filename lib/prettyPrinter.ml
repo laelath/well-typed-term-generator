@@ -44,13 +44,13 @@ let pretty_print (prog : Exp.program) : unit =
       let args = "\n"::(tab tab_i1)::(print_es args tab_i1 acc) in
       "call"::"\n"::(tab tab_i1)::(print_e func tab_i1 args)
     | ExtLambda (params, body) ->
-       let extvar = Exp.ExtVar.to_string (prog.params_extvar params) in
+       let extvar = Type.ExtVar.to_string (prog.params_extvar params) in
        let print_bnds = print_lst print_bnd [] in
        let body = "\n"::(tab tab_i1)::(print_e body (tab_i+1) acc) in
        let lambda = "λ> "::"("::(print_bnds (prog.get_params params) tab_i (extvar::")"::body)) in
       lambda
     | ExtCall (func, args) ->
-       let extvar = Exp.ExtVar.to_string (prog.args_extvar args) in
+       let extvar = Type.ExtVar.to_string (prog.args_extvar args) in
        let print_es = print_lst print_e ["\n";tab tab_i1] in
        let args = "\n"::(tab tab_i1)::(print_es (prog.get_args args) tab_i1 acc) in
        "call> "::extvar::"\n"::(tab tab_i1)::(print_e func tab_i1 args)

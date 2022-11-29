@@ -28,17 +28,17 @@ let find_vars (prog : Exp.program) (e : Exp.exp_label) =
          | Match (scr, _, (fst, rst, body)) ->
            if (e == body)
            then let lst_ty = (prog.get_exp scr).ty in
-                match prog.get_ty lst_ty with
-                | TyNdList ty' -> [(fst, ty'); (rst, lst_ty)]
+                match prog.ty.get_ty lst_ty with
+                | TyList ty' -> [(fst, ty'); (rst, lst_ty)]
                 | _ -> raise (Util.InternalError "match scrutinee does not have list type")
            else []
          | Lambda (params, _) ->
-           (match prog.get_ty node.ty with
-            | TyNdArrow (ty_params, _) -> List.combine params ty_params
+           (match prog.ty.get_ty node.ty with
+            | TyArrow (ty_params, _) -> List.combine params ty_params
             | _ -> raise (Util.InternalError "lambda does not have arrow type"))
          | ExtLambda (params, _) ->
-           (match prog.get_ty node.ty with
-            | TyNdArrowExt (ty_params, _) -> List.combine (prog.get_params params) (prog.get_ty_params ty_params)
+           (match prog.ty.get_ty node.ty with
+            | TyArrowExt (ty_params, _) -> List.combine (prog.get_params params) (prog.ty.get_ty_params ty_params)
             | _ -> raise (Util.InternalError "lambda does not have arrow type"))
          | _ -> [] in
       exp_binds @ find_binds ep
@@ -48,21 +48,21 @@ let find_vars (prog : Exp.program) (e : Exp.exp_label) =
 (* takes E[e] and finds all lambdas i such that E_1[lambda_i xs . E_2[e]] *)
 let find_enclosing_lambdas (prog : Exp.program) (e : Exp.exp_label) : (Exp.params_label list) =
   let rec find_ext_vars ty =
-    match prog.get_ty ty with
-    | TyNdBool -> Exp.ExtVar.Set.empty
-    | TyNdInt -> Exp.ExtVar.Set.empty
-    | TyNdList ty' -> find_ext_vars ty'
-    | TyNdArrow (params, ty') ->
+    match prog.ty.get_ty ty with
+    | TyBool -> Type.ExtVar.Set.empty
+    | TyInt -> Type.ExtVar.Set.empty
+    | TyList ty' -> find_ext_vars ty'
+    | TyArrow (params, ty') ->
       List.fold_left
-        (fun acc ty' -> Exp.ExtVar.Set.union acc (find_ext_vars ty'))
+        (fun acc ty' -> Type.ExtVar.Set.union acc (find_ext_vars ty'))
         (find_ext_vars ty') params
-    | TyNdArrowExt (params, ty') ->
-      Exp.ExtVar.Set.add
-        (prog.ty_params_extvar params)
+    | TyArrowExt (params, ty') ->
+      Type.ExtVar.Set.add
+        (prog.ty.ty_params_extvar params)
         (List.fold_left
-          (fun acc ty' -> Exp.ExtVar.Set.union acc (find_ext_vars ty'))
+          (fun acc ty' -> Type.ExtVar.Set.union acc (find_ext_vars ty'))
           (find_ext_vars ty')
-          (prog.get_ty_params params))
+          (prog.ty.get_ty_params params))
   in
 
   let node = prog.get_exp e in
@@ -75,7 +75,7 @@ let find_enclosing_lambdas (prog : Exp.program) (e : Exp.exp_label) : (Exp.param
       let node' = prog.get_exp e in
       match node'.exp with
       | ExtLambda (params, _) ->
-        if not (Exp.ExtVar.Set.mem (prog.params_extvar params) extvars)
+        if not (Type.ExtVar.Set.mem (prog.params_extvar params) extvars)
            && (Random.int (List.length (prog.get_params params) + 1) == 0)
         then find_enc node'.prev (params :: acc)
         else find_enc node'.prev acc
@@ -92,8 +92,8 @@ let exp_depth (prog : Exp.program) (e : Exp.exp_label) =
   exp_depth' e 0
 
 let is_list_ty (prog : Exp.program) ty =
-  match prog.get_ty ty with
-  | Exp.TyNdList _ -> true
+  match prog.ty.get_ty ty with
+  | Type.TyList _ -> true
   | _ -> false
 
 
@@ -143,8 +143,8 @@ let match_insertion_steps weight (prog : Exp.program) (hole : hole_info) (acc : 
   let all_depths = List.init (hole.depth + 1) (fun x -> x) in
   let acc = steps_generator prog hole acc
                             Rules.match_insertion_step weight all_depths in
-  match prog.get_ty hole.ty_label with
-  | TyNdList _ -> 
+  match prog.ty.get_ty hole.ty_label with
+  | TyList _ -> 
      steps_generator prog hole acc
                      Rules.match_insertion_list_step weight all_depths
   | _ -> acc
@@ -184,7 +184,7 @@ let find_std_lib_funcs prog tyl =
        if Random.int n <> 0
        then None
        else match ty with
-            | Exp.TyArrow (tys, ty') ->
+            | Type.FlatTyArrow (tys, ty') ->
               (match Exp.ty_compat_ty_label prog ty' tyl [] with
                | None -> None
                | Some mp -> Some (x, tys, mp))
@@ -214,14 +214,14 @@ let data_constructor_steps weight (prog : Exp.program) (hole : hole_info) (acc :
       set exp; 
       [] in
     Urn.insert acc (weight hole) (Urn.Value f) in
-  match prog.get_ty hole.ty_label with
-  | TyNdBool ->
+  match prog.ty.get_ty hole.ty_label with
+  | TyBool ->
      let acc = const_set (Exp.ValBool true) "true" acc in
      let acc = const_set (Exp.ValBool false) "false" acc in
      acc
-  | TyNdInt -> List.fold_left (fun acc n -> const_set (Exp.ValInt n) (Int.to_string n) acc)
+  | TyInt -> List.fold_left (fun acc n -> const_set (Exp.ValInt n) (Int.to_string n) acc)
                               acc (List.init 5 (fun n -> n))
-  | TyNdList ty' ->
+  | TyList ty' ->
      let acc = const_set Exp.Empty "empty" acc in
      let cons = 
        fun () ->
@@ -240,8 +240,8 @@ let func_constructor_steps weight (prog : Exp.program) (hole : hole_info) (acc :
   let set exp =
     prog.set_exp hole.label {exp=exp; ty=hole.ty_label; prev=hole.prev}
   in
-  match prog.get_ty hole.ty_label with
-  | TyNdArrow (ty_params, ty') ->
+  match prog.ty.get_ty hole.ty_label with
+  | TyArrow (ty_params, ty') ->
      let func = 
        fun () ->
        Debug.run (fun () -> Printf.eprintf ("creating lambda\n"));
@@ -250,13 +250,13 @@ let func_constructor_steps weight (prog : Exp.program) (hole : hole_info) (acc :
        set (Exp.Lambda (xs, body));
        [body] in
      Urn.insert acc (weight hole) (Urn.Value func)
-  | TyNdArrowExt (ty_params, ty') ->
+  | TyArrowExt (ty_params, ty') ->
      let func = 
        fun () ->
        Debug.run (fun () -> Printf.eprintf ("creating ext. lambda\n"));
-       let extvar = prog.ty_params_extvar ty_params in
+       let extvar = prog.ty.ty_params_extvar ty_params in
        let params = prog.new_params extvar in
-       let xs = List.map (fun _ -> prog.new_var ()) (prog.get_ty_params ty_params) in
+       let xs = List.map (fun _ -> prog.new_var ()) (prog.ty.get_ty_params ty_params) in
        List.iter (prog.add_param params) xs;
        let body = prog.new_exp {exp=Exp.Hole; ty=ty'; prev=Some hole.label} in
        set (Exp.ExtLambda (params, body));

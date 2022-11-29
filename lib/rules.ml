@@ -5,10 +5,10 @@ exception InternalError of string
 
 type hole_info = {
     label : Exp.exp_label;
-    ty_label : Exp.ty_label;
+    ty_label : Type.ty_label;
     prev : Exp.exp_label option;
     fuel : int;
-    vars : (Exp.var * Exp.ty_label) list;
+    vars : (Exp.var * Type.ty_label) list;
     depth : int;
   }
 
@@ -24,60 +24,61 @@ let rec find_pos (prog : Exp.program) (e : Exp.exp_label) (height : int) =
 
 (* TODO: pass full list of in-scope variables here *)
 let rec generate_type size (prog : Exp.program) =
-  prog.new_ty
+  prog.ty.new_ty
     ((Choose.choose_frequency
-        [(1, (fun _ -> Exp.TyNdBool)); (1, (fun _ -> Exp.TyNdInt));
-         (size, (fun _ -> Exp.TyNdList (generate_type (size - 1) prog)))])
+        [(1, (fun _ -> Type.TyBool)); (1, (fun _ -> Type.TyInt));
+         (size, (fun _ -> Type.TyList (generate_type (size - 1) prog)))])
      ())
 
+(* TODO: merge this with Type.flat_ty_to_ty / prog.ty.flat_ty_to_ty *)
 let rec ty_label_from_ty prog mp ty =
   match ty with
-  | Exp.TyVar var ->
+  | Type.FlatTyVar var ->
     (match List.assoc_opt var mp with
      | None -> let tyl = generate_type 3 prog in
                ((var, tyl) :: mp, tyl)
      | Some tyl -> (mp, tyl))
-  | Exp.TyInt -> (mp, prog.new_ty Exp.TyNdInt)
-  | Exp.TyBool -> (mp, prog.new_ty Exp.TyNdBool)
-  | Exp.TyList ty' ->
+  | Type.FlatTyInt -> (mp, prog.ty.new_ty Type.TyInt)
+  | Type.FlatTyBool -> (mp, prog.ty.new_ty Type.TyBool)
+  | Type.FlatTyList ty' ->
     let (mp, tyl') = ty_label_from_ty prog mp ty' in
-    (mp, prog.new_ty (Exp.TyNdList tyl'))
-  | Exp.TyArrow (tys, ty') ->
+    (mp, prog.ty.new_ty (Type.TyList tyl'))
+  | Type.FlatTyArrow (tys, ty') ->
     let (mp, tyl') = ty_label_from_ty prog mp ty' in
     let (mp, tys') = List.fold_left_map (ty_label_from_ty prog) mp (List.rev tys) in
-    (mp, prog.new_ty (Exp.TyNdArrow (tys', tyl')))
+    (mp, prog.ty.new_ty (Type.TyArrow (tys', tyl')))
 
 (* TODO: use this again *)
-let rec type_complexity (prog : Exp.program) (ty : Exp.ty_label) =
-  match prog.get_ty ty with
-  | Exp.TyNdBool -> 1
-  | Exp.TyNdInt -> 1
-  | Exp.TyNdList ty' -> 2 + type_complexity prog ty'
-  | Exp.TyNdArrow (params, ty') ->
+let rec type_complexity (prog : Exp.program) (ty : Type.ty_label) =
+  match prog.ty.get_ty ty with
+  | Type.TyBool -> 1
+  | Type.TyInt -> 1
+  | Type.TyList ty' -> 2 + type_complexity prog ty'
+  | Type.TyArrow (params, ty') ->
     List.fold_left
       (fun acc ty'' -> acc + type_complexity prog ty'')
       (1 + type_complexity prog ty')
       params
-  | Exp.TyNdArrowExt (params, ty') ->
+  | Type.TyArrowExt (params, ty') ->
     List.fold_left
       (fun acc ty'' -> acc + type_complexity prog ty'')
       (1 + type_complexity prog ty')
-      (prog.get_ty_params params)
+      (prog.ty.get_ty_params params)
 
 (* END UTILS *)
 
 (* Implements the rule:
    E ~> E{alpha + tau}
  *)
-let extend_extvar (prog : Exp.program) (extvar : Exp.extvar) (ext_ty : Exp.ty_label) =
-  let extend : 'a 'b . Exp.extvar -> (Exp.extvar -> 'a list) -> ('a -> unit) -> unit =
+let extend_extvar (prog : Exp.program) (extvar : Type.extvar) (ext_ty : Type.ty_label) =
+  let extend : 'a 'b . Type.extvar -> (Type.extvar -> 'a list) -> ('a -> unit) -> unit =
     fun ext get add ->
     let lst = get ext in
     let handle_elt elt = add elt in
     List.iter handle_elt lst in
 
-  extend extvar prog.extvar_ty_params
-         (fun ty_params -> prog.add_ty_param ty_params ext_ty);
+  extend extvar prog.ty.extvar_ty_params
+         (fun ty_params -> prog.ty.add_ty_param ty_params ext_ty);
   extend extvar prog.extvar_params
          (fun param -> prog.add_param param (prog.new_var()));
 
@@ -121,7 +122,7 @@ let ext_function_call_step (prog : Exp.program) (hole : hole_info)  =
   fun () ->
   Debug.run (fun () -> Printf.eprintf ("creating ext. function call\n"));
   let extvar = prog.new_extvar() in
-  let f_ty = prog.new_ty (Exp.TyNdArrowExt (prog.new_ty_params extvar, hole.ty_label)) in
+  let f_ty = prog.ty.new_ty (Type.TyArrowExt (prog.ty.new_ty_params extvar, hole.ty_label)) in
   let f = prog.new_exp {exp=Exp.Hole; ty=f_ty; prev=Some hole.label} in
   let args = prog.new_args extvar hole.label in
   prog.set_exp hole.label {exp=Exp.ExtCall (f, args); ty=hole.ty_label; prev=hole.prev};
@@ -136,18 +137,18 @@ let palka_rule_step (prog : Exp.program) (hole : hole_info) (f, f_ty) =
   fun () ->
   Debug.run (fun () -> Printf.eprintf ("creating palka function call\n"));
   let fe = prog.new_exp {exp=Exp.Var f; ty=f_ty; prev=Some hole.label} in
-  match (prog.get_ty f_ty) with
-  | Exp.TyNdArrowExt (ty_params, _) ->
-     let extvar = prog.ty_params_extvar ty_params in
+  match (prog.ty.get_ty f_ty) with
+  | Type.TyArrowExt (ty_params, _) ->
+     let extvar = prog.ty.ty_params_extvar ty_params in
      let args = prog.new_args extvar hole.label in
      let holes = List.map (fun arg_ty ->
                      let hole = prog.new_exp {exp=Exp.Hole; ty=arg_ty; prev=Some hole.label} in
                      prog.add_arg args hole;
                      hole)
-                          (List.rev (prog.get_ty_params ty_params)) in
+                          (List.rev (prog.ty.get_ty_params ty_params)) in
      prog.set_exp hole.label {exp=Exp.ExtCall (fe, args); ty=hole.ty_label; prev=hole.prev};
      holes
-  | Exp.TyNdArrow (tys, _) ->
+  | Type.TyArrow (tys, _) ->
      let holes = List.map (fun arg_ty -> prog.new_exp {exp=Exp.Hole; ty=arg_ty; prev=Some hole.label}) tys in
      prog.set_exp hole.label {exp=Exp.Call (fe, holes); ty=hole.ty_label; prev=hole.prev};
      holes
@@ -188,7 +189,7 @@ let match_insertion_step (prog : Exp.program) (hole : hole_info) height =
   let node' = prog.get_exp e' in
   let e_match = prog.new_exp {exp=Exp.Hole; ty=node'.ty; prev=node'.prev} in
   let hole_nil = prog.new_exp {exp=Exp.Hole; ty=node'.ty; prev=Some e_match} in
-  let list_ty = prog.new_ty (Exp.TyNdList hole.ty_label) in
+  let list_ty = prog.ty.new_ty (Type.TyList hole.ty_label) in
   let hole_scr = prog.new_exp {exp=Exp.Hole; ty=list_ty; prev=Some e_match} in
   let x = prog.new_var () in
   let y = prog.new_var () in
@@ -260,7 +261,7 @@ let var_step (prog : Exp.program) (hole : hole_info) (var, _) =
 let create_if_step (prog : Exp.program) (hole : hole_info)  =
   fun () ->
   Debug.run (fun () -> Printf.eprintf ("creating if\n"));
-  let pred = prog.new_exp {exp=Exp.Hole; ty=prog.new_ty Exp.TyNdBool; prev=Some hole.label} in
+  let pred = prog.new_exp {exp=Exp.Hole; ty=prog.ty.new_ty Type.TyBool; prev=Some hole.label} in
   let thn = prog.new_exp {exp=Exp.Hole; ty=hole.ty_label; prev=Some hole.label} in
   let els = prog.new_exp {exp=Exp.Hole; ty=hole.ty_label; prev=Some hole.label} in
   prog.set_exp hole.label {exp=Exp.If (pred, thn, els); ty=hole.ty_label; prev=hole.prev};
@@ -288,7 +289,7 @@ let std_lib_palka_rule_step (prog : Exp.program) (hole : hole_info) (f, tys, mp)
   Debug.run (fun () -> Printf.eprintf ("creating std lib palka call: %s\n") f);
   let (_, tyls) = List.fold_left_map (ty_label_from_ty prog) mp (List.rev tys) in
   let holes = List.map (fun tyl -> prog.new_exp {exp=Exp.Hole; ty=tyl; prev=Some hole.label}) tyls in
-  let func = prog.new_exp {exp=Exp.StdLibRef f; ty=prog.new_ty (Exp.TyNdArrow (tyls, hole.ty_label)); prev=Some hole.label} in
+  let func = prog.new_exp {exp=Exp.StdLibRef f; ty=prog.ty.new_ty (Type.TyArrow (tyls, hole.ty_label)); prev=Some hole.label} in
   prog.set_exp hole.label {exp=Exp.Call (func, holes); ty=hole.ty_label; prev=hole.prev};
   holes
 
@@ -299,8 +300,8 @@ let set_step (prog : Exp.program) (hole : hole_info) exp =
 
 (*
 let const_bool (prog : Exp.program) (hole : hole_info) = 
-  match prog.get_ty hole.ty_label with
-  | TyNdBool ->
+  match prog.ty.get_ty hole.ty_label with
+  | TyBool ->
      fun () ->
      set (Exp.ValBool true)
   raise InternalError "const_bool not given bool hole" 
