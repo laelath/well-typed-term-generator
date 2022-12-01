@@ -12,13 +12,13 @@ let haskell_string (prog : Exp.program) =
           "" params
     in
 
-    let ty = prog.get_ty tyl in
+    let ty = prog.ty.get_ty tyl in
     match ty with
-    | TyNdInt -> "Int"
-    | TyNdBool -> "Bool"
-    | TyNdList tyl' -> "[" ^ str_ty tyl' ^ "]"
-    | TyNdArrow (params, tyl') -> "(" ^ str_ty_params params ^ str_ty tyl' ^ ")"
-    | TyNdArrowExt (params, tyl') -> "(" ^ str_ty_params (prog.get_ty_params params) ^ str_ty tyl' ^ ")"
+    | TyInt -> "Int"
+    | TyBool -> "Bool"
+    | TyList tyl' -> "[" ^ str_ty tyl' ^ "]"
+    | TyArrow (params, tyl') -> "(" ^ str_ty_params params ^ str_ty tyl' ^ ")"
+    | TyArrowExt (params, tyl') -> "(" ^ str_ty_params (prog.ty.get_ty_params params) ^ str_ty tyl' ^ ")"
   in
 
   (* let str_var var ty = "(" ^ Exp.Var.to_string var ^ "::" ^ str_ty ty ^ ")" in *)
@@ -87,40 +87,41 @@ let haskell_string (prog : Exp.program) =
   str_exp prog.head
 
 let haskell_std_lib =
-  let open Exp in
-  [("seq", (TyArrow ([TyVar "b"; TyVar "a"], TyVar "a"), 1));
-   ("id", (TyArrow ([TyVar "a"], TyVar "a"), 2));
-   ("(+)", (TyArrow ([TyInt; TyInt], TyInt), 1));
-   ("(+1)", (TyArrow ([TyInt], TyInt), 1));
-   ("(-)", (TyArrow ([TyInt; TyInt], TyInt), 1));
-   ("head", (TyArrow ([TyList (TyVar "a")], TyVar "a"), 3));
-   ("tail", (TyArrow ([TyList (TyVar "a")], TyList (TyVar "a")), 3));
-   ("take", (TyArrow ([TyInt; TyList (TyVar "a")], TyList (TyVar "a")), 4));
-   ("(!!)", (TyArrow ([TyList (TyVar "a"); TyInt], TyVar "a"), 4));
-   ("length", (TyArrow ([TyList (TyVar "a")], TyInt), 1));
-   ("(++)", (TyArrow ([TyList (TyVar "a"); TyList (TyVar "a")],
-                      TyList (TyVar "a")), 1));
-   ("filter", (TyArrow ([TyArrow ([TyVar "a"], TyBool); TyList (TyVar "a")],
-                        TyList (TyVar "a")), 1));
-   ("map", (TyArrow ([TyArrow ([TyVar "a"], TyVar "b"); TyList (TyVar "a")],
-                     TyList (TyVar "b")), 1));
-   ("foldr", (TyArrow ([TyArrow ([TyVar "b"; TyVar "a"],
-                                 TyVar "a");
-                        TyVar "a"; TyList (TyVar "b")],
-                       TyVar "a"), 1));
-   ("odd", (TyArrow ([TyInt], TyBool), 1));
-   ("even", (TyArrow ([TyInt], TyBool), 1));
-   ("(&&)", (TyArrow ([TyBool; TyBool], TyBool), 1));
-   ("(||)", (TyArrow ([TyBool; TyBool], TyBool), 1));
-   ("not", (TyArrow ([TyBool], TyBool), 1));
-   ("((==)::Int -> Int -> Bool)", (TyArrow ([TyInt; TyInt], TyBool), 1));
-   ("((==)::Bool -> Bool -> Bool)", (TyArrow ([TyBool; TyBool], TyBool), 1));
-   ("((==)::[Int] -> [Int] -> Bool)", (TyArrow ([TyList TyInt; TyList TyInt], TyBool), 1));
-   ("undefined", (TyVar "a", 32));
+  let open Type in
+  [("seq", (FlatTyArrow ([FlatTyVar "b"; FlatTyVar "a"], FlatTyVar "a"), 1));
+   ("id", (FlatTyArrow ([FlatTyVar "a"], FlatTyVar "a"), 2));
+   ("(+)", (FlatTyArrow ([FlatTyInt; FlatTyInt], FlatTyInt), 1));
+   ("(+1)", (FlatTyArrow ([FlatTyInt], FlatTyInt), 1));
+   ("(-)", (FlatTyArrow ([FlatTyInt; FlatTyInt], FlatTyInt), 1));
+   ("head", (FlatTyArrow ([FlatTyList (FlatTyVar "a")], FlatTyVar "a"), 3));
+   ("tail", (FlatTyArrow ([FlatTyList (FlatTyVar "a")], FlatTyList (FlatTyVar "a")), 3));
+   ("take", (FlatTyArrow ([FlatTyInt; FlatTyList (FlatTyVar "a")], FlatTyList (FlatTyVar "a")), 4));
+   ("(!!)", (FlatTyArrow ([FlatTyList (FlatTyVar "a"); FlatTyInt], FlatTyVar "a"), 4));
+   ("length", (FlatTyArrow ([FlatTyList (FlatTyVar "a")], FlatTyInt), 1));
+   ("(++)", (FlatTyArrow ([FlatTyList (FlatTyVar "a"); FlatTyList (FlatTyVar "a")],
+                      FlatTyList (FlatTyVar "a")), 1));
+   ("filter", (FlatTyArrow ([FlatTyArrow ([FlatTyVar "a"], FlatTyBool); FlatTyList (FlatTyVar "a")],
+                        FlatTyList (FlatTyVar "a")), 1));
+   ("map", (FlatTyArrow ([FlatTyArrow ([FlatTyVar "a"], FlatTyVar "b"); FlatTyList (FlatTyVar "a")],
+                     FlatTyList (FlatTyVar "b")), 1));
+   ("foldr", (FlatTyArrow ([FlatTyArrow ([FlatTyVar "b"; FlatTyVar "a"],
+                                 FlatTyVar "a");
+                        FlatTyVar "a"; FlatTyList (FlatTyVar "b")],
+                       FlatTyVar "a"), 1));
+   ("odd", (FlatTyArrow ([FlatTyInt], FlatTyBool), 1));
+   ("even", (FlatTyArrow ([FlatTyInt], FlatTyBool), 1));
+   ("(&&)", (FlatTyArrow ([FlatTyBool; FlatTyBool], FlatTyBool), 1));
+   ("(||)", (FlatTyArrow ([FlatTyBool; FlatTyBool], FlatTyBool), 1));
+   ("not", (FlatTyArrow ([FlatTyBool], FlatTyBool), 1));
+   ("((==)::Int -> Int -> Bool)", (FlatTyArrow ([FlatTyInt; FlatTyInt], FlatTyBool), 1));
+   ("((==)::Bool -> Bool -> Bool)", (FlatTyArrow ([FlatTyBool; FlatTyBool], FlatTyBool), 1));
+   ("((==)::[Int] -> [Int] -> Bool)", (FlatTyArrow ([FlatTyList FlatTyInt; FlatTyList FlatTyInt], FlatTyBool), 1));
+   ("undefined", (FlatTyVar "a", 32));
   ]
 
 let generate_palka size =
-  Generate.generate_fp Generators.main ~std_lib:haskell_std_lib size (Exp.TyArrow ([Exp.TyList Exp.TyInt], (Exp.TyList Exp.TyInt)))
+  let open Type in
+  Generate.generate_fp Generators.main ~std_lib:haskell_std_lib size (FlatTyArrow ([FlatTyList FlatTyInt], (FlatTyList FlatTyInt)))
 
 let generate_palka_batch batch size =
   let rec gen_batch batch acc =

@@ -44,6 +44,11 @@ type flat_ty =
 
 
 type registry = {
+    (*
+    mutable extvars : list extvar;
+    mutable ty_params : list ty_param;
+     *)
+
     (* type operations *)
     new_ty : ty -> ty_label;
     get_ty : ty_label -> ty;
@@ -62,6 +67,24 @@ type registry = {
 
     flat_ty_to_ty : flat_ty -> ty_label;
   }
+
+let consistency_check ty_registry ty0 = 
+  let rec consistency_check_ty ty =
+    match ty_registry.get_ty ty with
+    | TyBool -> ()
+    | TyInt -> ()
+    | TyList ty' -> consistency_check_ty ty'
+    | TyArrow (params, ty_im) ->
+      List.iter consistency_check_ty params;
+      consistency_check_ty ty_im
+    | TyArrowExt (ty_params, ty_im) ->
+      let extvar = ty_registry.ty_params_extvar ty_params in
+      if not (List.mem ty_params (ty_registry.extvar_ty_params extvar))
+      then raise (Util.ConsistencyError "ty_params label not in extvar list")
+      else List.iter consistency_check_ty (ty_registry.get_ty_params ty_params);
+           consistency_check_ty ty_im in
+  consistency_check_ty ty0
+
 
 exception BadTypeError of string
 let flat_ty_to_ty new_ty =
@@ -130,4 +153,5 @@ let make () (*?(std_lib = [])*) =
 
     flat_ty_to_ty = flat_ty_to_ty new_ty;
   }
+
 

@@ -176,35 +176,25 @@ let make_program ?(std_lib = []) ty =
     let rename e' = if e' == a then b else e' in
 
     let node = get_exp e in
-    (*
-    let set e' = set_exp e {exp=e'; ty=node.ty; prev=node.prev}
-     *)
+    let set e' = set_exp e {exp=e'; ty=node.ty; prev=node.prev} in
     match node.exp with
     | Let (x, rhs, body) ->
-      set_exp e {exp=Let (x, rename rhs, rename body);
-                 ty=node.ty; prev=node.prev}
+       set (Let (x, rename rhs, rename body))
     | Lambda (params, body) ->
-      set_exp e {exp=Lambda (params, rename body);
-                 ty=node.ty; prev=node.prev}
+      set (Lambda (params, rename body))
     | Call (func, args) ->
-      set_exp e {exp=Call (rename func, (List.map rename args));
-                 ty=node.ty; prev=node.prev}
+      set (Call (rename func, (List.map rename args)))
     | ExtLambda (params, body) ->
-      set_exp e {exp=ExtLambda (params, rename body);
-                 ty=node.ty; prev=node.prev}
+      set (ExtLambda (params, rename body))
     | ExtCall (func, args) ->
       ArgsLabel.Tbl.replace args_tbl args (List.map rename (get_args args));
-      set_exp e {exp=ExtCall (rename func, args);
-                 ty=node.ty; prev=node.prev}
+      set (ExtCall (rename func, args))
     | If (pred, thn, els) ->
-      set_exp e {exp=If (rename pred, rename thn, rename els);
-                 ty=node.ty; prev=node.prev}
+      set (If (rename pred, rename thn, rename els))
     | Cons (fst, rst) ->
-      set_exp e {exp=Cons (rename fst, rename rst);
-                 ty=node.ty; prev=node.prev}
+      set (Cons (rename fst, rename rst))
     | Match (scr, nil, (fst, rst, cons)) ->
-      set_exp e {exp=Match (rename scr, rename nil, (fst, rst, rename cons));
-                 ty=node.ty; prev=node.prev}
+       set (Match (rename scr, rename nil, (fst, rst, rename cons)))
     | _ -> () in
 
   let head = new_exp {exp=Hole; ty=ty_registry.flat_ty_to_ty ty; prev=None} in
@@ -238,32 +228,15 @@ let make_program ?(std_lib = []) ty =
     rename_child = rename_child;
   }
 
-exception ConsistencyError of string
-
 (* check that the prev pointers are correct,
    and that each node points to itself *)
 let consistency_check prog =
 
-  let rec consistency_check_ty ty =
-    match prog.ty.get_ty ty with
-    | TyBool -> ()
-    | TyInt -> ()
-    | TyList ty' -> consistency_check_ty ty'
-    | TyArrow (params, ty_im) ->
-      List.iter consistency_check_ty params;
-      consistency_check_ty ty_im
-    | TyArrowExt (ty_params, ty_im) ->
-      let extvar = prog.ty.ty_params_extvar ty_params in
-      if not (List.mem ty_params (prog.ty.extvar_ty_params extvar))
-      then raise (ConsistencyError "ty_params label not in extvar list")
-      else List.iter consistency_check_ty (prog.ty.get_ty_params ty_params);
-           consistency_check_ty ty_im in
-
   let rec consistency_check_exp prev e =
     let node = prog.get_exp e in
     if prev <> node.prev
-    then raise (ConsistencyError "Previous node pointer mismatch")
-    else consistency_check_ty node.ty;
+    then raise (Util.ConsistencyError "Previous node pointer mismatch")
+    else Type.consistency_check prog.ty node.ty;
          match node.exp with
          | Hole -> ()
          | Var _ -> ()
@@ -295,13 +268,13 @@ let consistency_check prog =
          | ExtLambda (params, body) ->
            let extvar = prog.params_extvar params in
            if not (List.mem params (prog.extvar_params extvar))
-           then raise (ConsistencyError "params label not in extvar list")
+           then raise (Util.ConsistencyError "params label not in extvar list")
            else consistency_check_exp (Some e) body
 
          | ExtCall (func, args) ->
            let extvar = prog.args_extvar args in
            if not (List.mem args (prog.extvar_args extvar))
-           then raise (ConsistencyError "args label not in extvar list")
+           then raise (Util.ConsistencyError "args label not in extvar list")
            else List.iter (consistency_check_exp (Some e)) (prog.get_args args);
                 consistency_check_exp (Some e) func
 
