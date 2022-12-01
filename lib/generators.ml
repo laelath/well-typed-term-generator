@@ -198,70 +198,30 @@ let std_lib_palka_rule_steps weight (prog : Exp.program) (hole : hole_info) (acc
   steps_generator prog hole acc
                   Rules.std_lib_palka_rule_step weight valid_refs
 
-(* Implements the rule:
-   E[<>] ~> E[dcon <> ... <>]
- *)
+
+let base_constructor_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
+  (* TODO: sample base type (in this case, just Int) *)
+  match  prog.ty.get_ty hole.ty_label with
+  | TyInt ->
+     let vals = [Exp.ValInt 0; Exp.ValInt 1; Exp.ValInt 33] in
+     steps_generator prog hole acc
+                     Rules.base_constructor_step weight vals
+  | _ -> acc
+
 let data_constructor_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
   (* FUTURE: loop over data constructors for type each gets a rule *)
   (* FUTURE: disincentivize nested data constructors. Maybe these rules all get weight 1, and there's a seperate rule for data cons that add holes that gets a higher weight when not nested. *)
-  let set exp =
-    prog.set_exp hole.label {exp=exp; ty=hole.ty_label; prev=hole.prev}
-  in
-  let const_set exp msg acc =
-    let f = 
-      fun () ->
-      Debug.run (fun () -> Printf.eprintf ("creating %s\n") msg);
-      set exp; 
-      [] in
-    Urn.insert acc (weight hole) (Urn.Value f) in
-  match prog.ty.get_ty hole.ty_label with
-  | TyBool ->
-     let acc = const_set (Exp.ValBool true) "true" acc in
-     let acc = const_set (Exp.ValBool false) "false" acc in
-     acc
-  | TyInt -> List.fold_left (fun acc n -> const_set (Exp.ValInt n) (Int.to_string n) acc)
-                              acc (List.init 5 (fun n -> n))
-  | TyList ty' ->
-     let acc = const_set Exp.Empty "empty" acc in
-     let cons = 
-       fun () ->
-       Debug.run (fun () -> Printf.eprintf ("creating cons\n"));
-       let lhole = prog.new_exp {exp=Exp.Hole; ty=hole.ty_label; prev=Some hole.label} in
-       let ehole = prog.new_exp {exp=Exp.Hole; ty=ty'; prev=Some hole.label} in
-       set (Exp.Cons (ehole, lhole));
-       [ehole; lhole] in
-     Urn.insert acc (weight hole) (Urn.Value cons)
-  | _ -> acc
+  let vals = match prog.ty.get_ty hole.ty_label with
+    | TyBool -> ["true"; "false"]
+    | TyList _ -> ["nil"; "cons"]
+    | _ -> [] in
+  steps_generator prog hole acc
+                  Rules.data_constructor_step weight vals
 
-(* Implements the rule:
-   E[<>] ~> E[lambda ... <>]
- *)
 let func_constructor_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
-  let set exp =
-    prog.set_exp hole.label {exp=exp; ty=hole.ty_label; prev=hole.prev}
-  in
   match prog.ty.get_ty hole.ty_label with
-  | TyArrow (ty_params, ty') ->
-     let func = 
-       fun () ->
-       Debug.run (fun () -> Printf.eprintf ("creating lambda\n"));
-       let xs = List.map (fun _ -> prog.new_var ()) ty_params in
-       let body = prog.new_exp {exp=Exp.Hole; ty=ty'; prev=Some hole.label} in
-       set (Exp.Lambda (xs, body));
-       [body] in
-     Urn.insert acc (weight hole) (Urn.Value func)
-  | TyArrowExt (ty_params, ty') ->
-     let func = 
-       fun () ->
-       Debug.run (fun () -> Printf.eprintf ("creating ext. lambda\n"));
-       let extvar = prog.ty.ty_params_extvar ty_params in
-       let params = prog.new_params extvar in
-       let xs = List.map (fun _ -> prog.new_var ()) (prog.ty.get_ty_params ty_params) in
-       List.iter (prog.add_param params) xs;
-       let body = prog.new_exp {exp=Exp.Hole; ty=ty'; prev=Some hole.label} in
-       set (Exp.ExtLambda (params, body));
-       [body] in
-     Urn.insert acc (weight hole) (Urn.Value func)
+  | TyArrow _ | TyArrowExt _ ->
+     singleton_generator weight Rules.func_constructor_step prog hole acc
   | _ -> acc
 
 type t = ((Exp.program -> hole_info -> rule_urn -> rule_urn) list)

@@ -1,7 +1,5 @@
 
 (* FIXME *)
-exception InternalError of string
-
 
 type hole_info = {
     label : Exp.exp_label;
@@ -152,7 +150,7 @@ let palka_rule_step (prog : Exp.program) (hole : hole_info) (f, f_ty) =
      let holes = List.map (fun arg_ty -> prog.new_exp {exp=Exp.Hole; ty=arg_ty; prev=Some hole.label}) tys in
      prog.set_exp hole.label {exp=Exp.Call (fe, holes); ty=hole.ty_label; prev=hole.prev};
      holes
-  | _ -> raise (InternalError "variable in function list not a function")
+  | _ -> raise (Util.Impossible "variable in function list not a function")
 
 
 (* Implements the rule:
@@ -294,15 +292,79 @@ let std_lib_palka_rule_step (prog : Exp.program) (hole : hole_info) (f, tys, mp)
   holes
 
 
-let set_step (prog : Exp.program) (hole : hole_info) exp =
-  prog.set_exp hole.label {exp=exp; ty=hole.ty_label; prev=hole.prev};
-  []
+(* Implements the rule:
+   E[<>] ~> E[value]
+ *)
+let base_constructor_step (prog : Exp.program) (hole : hole_info) exp' =
+  let set exp = prog.set_exp hole.label {exp=exp; ty=hole.ty_label; prev=hole.prev} in
+  match prog.ty.get_ty hole.ty_label with
+  | TyInt -> 
+     fun () -> 
+     set exp'; []
+  | _ -> raise (Util.Impossible "bad base type")
 
-(*
-let const_bool (prog : Exp.program) (hole : hole_info) = 
+
+(* Implements the rule:
+   E[<>] ~> E[dcon <> ... <>]
+ *)
+let data_constructor_step (prog : Exp.program) (hole : hole_info) dcon =
+  (* FUTURE: loop over data constructors for type each gets a rule *)
+  (* FUTURE: disincentivize nested data constructors. Maybe these rules all get weight 1, and there's a seperate rule for data cons that add holes that gets a higher weight when not nested. *)
+  let set exp = prog.set_exp hole.label {exp=exp; ty=hole.ty_label; prev=hole.prev} in
   match prog.ty.get_ty hole.ty_label with
   | TyBool ->
+     (match dcon with
+      | "true" -> 
+         fun () ->
+         Debug.run (fun () -> Printf.eprintf ("creating true\n"));
+         set (Exp.ValBool true);
+         []
+      | "false" -> 
+         fun () ->
+         Debug.run (fun () -> Printf.eprintf ("creating false\n"));
+         set (Exp.ValBool true);
+         []
+     | _ -> raise (Util.Impossible "bad data constructor"))
+  | TyList ty' ->
+     (match dcon with
+      | "nil" ->
+         fun () ->
+         Debug.run (fun () -> Printf.eprintf ("creating nil\n"));
+         set (Exp.Empty);
+         []
+      | "cons" -> 
+         fun () ->
+         Debug.run (fun () -> Printf.eprintf ("creating cons\n"));
+         let lhole = prog.new_exp {exp=Exp.Hole; ty=hole.ty_label; prev=Some hole.label} in
+         let ehole = prog.new_exp {exp=Exp.Hole; ty=ty'; prev=Some hole.label} in
+         set (Exp.Cons (ehole, lhole));
+         [ehole; lhole]
+      | _ -> raise (Util.Impossible "bad data constructor"))
+  | _ -> raise (Util.Impossible "data constructor on non-data type")
+
+
+(* Implements the rule:
+   E[<>] ~> E[lambda ... <>]
+ *)
+let func_constructor_step (prog : Exp.program) (hole : hole_info) =
+  let set exp = prog.set_exp hole.label {exp=exp; ty=hole.ty_label; prev=hole.prev} in
+  match prog.ty.get_ty hole.ty_label with
+  | TyArrow (ty_params, ty') ->
      fun () ->
-     set (Exp.ValBool true)
-  raise InternalError "const_bool not given bool hole" 
-     *)
+     Debug.run (fun () -> Printf.eprintf ("creating lambda\n"));
+     let xs = List.map (fun _ -> prog.new_var ()) ty_params in
+     let body = prog.new_exp {exp=Exp.Hole; ty=ty'; prev=Some hole.label} in
+     set (Exp.Lambda (xs, body));
+     [body]
+  | TyArrowExt (ty_params, ty') ->
+     fun () ->
+     Debug.run (fun () -> Printf.eprintf ("creating ext. lambda\n"));
+     let extvar = prog.ty.ty_params_extvar ty_params in
+     let params = prog.new_params extvar in
+     let xs = List.map (fun _ -> prog.new_var ()) (prog.ty.get_ty_params ty_params) in
+     List.iter (prog.add_param params) xs;
+     let body = prog.new_exp {exp=Exp.Hole; ty=ty'; prev=Some hole.label} in
+     set (Exp.ExtLambda (params, body));
+     [body]
+  | _ -> fun () ->
+         raise (Util.Impossible "function constructor on non-function type")
