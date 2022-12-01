@@ -155,3 +155,63 @@ let make () (*?(std_lib = [])*) =
   }
 
 
+let rec is_same_ty ty_registry tyl1 tyl2 =
+  if TypeLabel.equal tyl1 tyl2
+  then true
+  else match (ty_registry.get_ty tyl1, ty_registry.get_ty tyl2) with
+       | (TyBool, TyBool) -> true
+       | (TyInt, TyInt) -> true
+       | (TyArrowExt (params1, tyb1), TyArrowExt (params2, tyb2)) ->
+         (ty_registry.ty_params_extvar params1 == ty_registry.ty_params_extvar params2)
+         && List.for_all2 (is_same_ty ty_registry) (ty_registry.get_ty_params params1) (ty_registry.get_ty_params params2)
+         && is_same_ty ty_registry tyb1 tyb2
+       | (_, _) -> false
+
+let is_func_producing ty_registry tyl tylf =
+  match ty_registry.get_ty tylf with
+  | TyArrow (_, tyb) -> is_same_ty ty_registry tyl tyb
+  | TyArrowExt (_, tyb) -> is_same_ty ty_registry tyl tyb
+  | _ -> false
+
+let rec ty_compat_ty_label (ty_registry : registry) (ty : flat_ty) (tyl : ty_label) acc =
+  let check b = if b then Some acc else None in
+
+  match ty, ty_registry.get_ty tyl with
+  | FlatTyVar name, _ ->
+    (match List.assoc_opt name acc with
+     | None -> Some ((name, tyl) :: acc)
+     | Some tyl' -> check (is_same_ty ty_registry tyl tyl'))
+  | FlatTyInt, TyInt -> Some acc
+  | FlatTyBool, TyBool -> Some acc
+  | FlatTyList ty', TyList tyl' ->
+    ty_compat_ty_label ty_registry ty' tyl' acc
+  | FlatTyArrow (tys, ty'), TyArrow (tyls, tyl') ->
+    if List.length tys == List.length tyls
+    then List.fold_left2
+           (fun acc ty tyl ->
+              Option.bind acc (ty_compat_ty_label ty_registry ty tyl))
+           (ty_compat_ty_label ty_registry ty' tyl' acc)
+           (List.rev tys) tyls
+    else None
+  | _ -> None
+
+
+let rec string_of ty_registry ty =
+  let string_of_params ty_params =
+    match ty_params with
+    | [] -> ""
+    | ty :: tys ->
+      List.fold_left
+        (fun acc ty -> string_of ty_registry ty ^ " " ^ acc)
+        (string_of ty_registry ty)
+        tys
+  in
+  match ty_registry.get_ty ty with
+  | TyBool -> "Bool"
+  | TyInt -> "Int"
+  | TyList ty' -> "(List " ^ string_of ty_registry ty' ^ ")"
+  | TyArrow (params, ty_im) ->
+    "(" ^ string_of_params params ^ " -> " ^ string_of ty_registry ty_im ^ ")"
+  | TyArrowExt (ty_params, ty_im) ->
+    "(" ^ string_of_params (ty_registry.get_ty_params ty_params) ^ " -> " ^ string_of ty_registry ty_im ^ ")"
+

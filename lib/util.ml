@@ -1,6 +1,6 @@
 
 exception Unimplemented
 
-exception InternalError of string
+exception Impossible of string
 
 exception ConsistencyError of string

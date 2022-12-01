@@ -1,13 +1,3 @@
-(* Each node has a unique label, which cannot be changed.
-   if we have some node (call e1_l1 e2_l2) and we are updating e1 to (let (x rhs) e1),
-   it's tempting to overwrite the l1 label to point to this new node.
-   The problem is that we have update maps `type extension var -> program location set`
-   that point to where syntactic updates need to happen, and we don't want to update these.
-
-   Each node also has a `prev` pointer, so there's no term sharing
-   allowed; each node has exactly one reference.
- *)
-
 type worklist = {
     pop : unit -> Exp.exp_label option;
     add : int * Exp.exp_label-> unit;
@@ -44,7 +34,7 @@ let make_state (fuel : int) : state =
 let assert_hole (exp : Exp.exp) =
   match exp with
   | Exp.Hole -> ()
-  | _ -> raise (Util.InternalError "exp is not a hole")
+  | _ -> raise (Util.Impossible "worklist exp is not a hole")
 
 let sample n = Random.int n
 

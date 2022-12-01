@@ -30,16 +30,16 @@ let find_vars (prog : Exp.program) (e : Exp.exp_label) =
            then let lst_ty = (prog.get_exp scr).ty in
                 match prog.ty.get_ty lst_ty with
                 | TyList ty' -> [(fst, ty'); (rst, lst_ty)]
-                | _ -> raise (Util.InternalError "match scrutinee does not have list type")
+                | _ -> raise (Util.Impossible "match scrutinee does not have list type")
            else []
          | Lambda (params, _) ->
            (match prog.ty.get_ty node.ty with
             | TyArrow (ty_params, _) -> List.combine params ty_params
-            | _ -> raise (Util.InternalError "lambda does not have arrow type"))
+            | _ -> raise (Util.Impossible "lambda does not have arrow type"))
          | ExtLambda (params, _) ->
            (match prog.ty.get_ty node.ty with
             | TyArrowExt (ty_params, _) -> List.combine (prog.get_params params) (prog.ty.get_ty_params ty_params)
-            | _ -> raise (Util.InternalError "lambda does not have arrow type"))
+            | _ -> raise (Util.Impossible "lambda does not have arrow type"))
          | _ -> [] in
       exp_binds @ find_binds ep
   in
@@ -131,7 +131,7 @@ let not_useless_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule
                   Rules.not_useless_step weight params
 
 let palka_rule_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
-  let funcs = List.filter (fun b -> Exp.is_func_producing prog hole.ty_label (snd b)) hole.vars in
+  let funcs = List.filter (fun b -> Type.is_func_producing prog.ty hole.ty_label (snd b)) hole.vars in
   steps_generator prog hole acc
                   Rules.palka_rule_step weight funcs
 
@@ -156,19 +156,19 @@ let create_match_steps weight (prog : Exp.program) (hole : hole_info) (acc : rul
                   Rules.create_match_step weight lists 
 
 let var_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
-  let ref_vars = List.filter (fun b -> Exp.is_same_ty prog (snd b) hole.ty_label) hole.vars in
+  let ref_vars = List.filter (fun b -> Type.is_same_ty prog.ty (snd b) hole.ty_label) hole.vars in
   steps_generator prog hole acc
                   Rules.var_step weight ref_vars 
 
 
 (* std_lib objects specify an occurence amount,
    objects are filtered so they can be selected 1/n of the time they are valid choices *)
-let find_std_lib_refs prog tyl =
+let find_std_lib_refs (prog : Exp.program) tyl =
   List.filter_map
     (fun (x, (ty, n)) ->
        if Random.int n <> 0
        then None
-       else Option.map (fun _ -> x) (Exp.ty_compat_ty_label prog ty tyl []))
+       else Option.map (fun _ -> x) (Type.ty_compat_ty_label prog.ty ty tyl []))
     prog.std_lib
 
 let std_lib_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
@@ -178,14 +178,14 @@ let std_lib_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_urn
                   Rules.std_lib_step weight valid_refs
 
 (* finds all functions in the standard library that can produce tyl *)
-let find_std_lib_funcs prog tyl =
+let find_std_lib_funcs (prog : Exp.program) tyl =
   List.filter_map
     (fun (x, (ty, n)) ->
        if Random.int n <> 0
        then None
        else match ty with
             | Type.FlatTyArrow (tys, ty') ->
-              (match Exp.ty_compat_ty_label prog ty' tyl [] with
+              (match Type.ty_compat_ty_label prog.ty ty' tyl [] with
                | None -> None
                | Some mp -> Some (x, tys, mp))
             | _ -> None)

@@ -1,4 +1,12 @@
+(* Each node has a unique label, which cannot be changed.
+   if we have some node (call e1_l1 e2_l2) and we are updating e1 to (let (x rhs) e1),
+   it's tempting to overwrite the l1 label to point to this new node.
+   The problem is that we have update maps `type extension var -> program location set`
+   that point to where syntactic updates need to happen, and we don't want to update these.
 
+   Each node also has a `prev` pointer, so there's no term sharing
+   allowed; each node has exactly one reference.
+ *)
 
 (* expression labels *)
 module ExpLabel = Key.Make (struct let x="lab" end)
@@ -232,7 +240,7 @@ let make_program ?(std_lib = []) ty =
    and that each node points to itself *)
 let consistency_check prog =
 
-  let rec consistency_check_exp prev e =
+  let rec check prev e =
     let node = prog.get_exp e in
     if prev <> node.prev
     then raise (Util.ConsistencyError "Previous node pointer mismatch")
@@ -246,42 +254,27 @@ let consistency_check prog =
          | ValBool _ -> ()
 
          | Empty -> ()
-         | Cons (e1, e2) ->
-           consistency_check_exp (Some e) e1;
-           consistency_check_exp (Some e) e2
-         | Match (e1, e2, (_, _, e3)) ->
-           consistency_check_exp (Some e) e1;
-           consistency_check_exp (Some e) e2;
-           consistency_check_exp (Some e) e3
+         | Cons (e1, e2) -> check (Some e) e1; check (Some e) e2
+         | Match (e1, e2, (_, _, e3)) -> check (Some e) e1; check (Some e) e2; check (Some e) e3
 
-         | Let (_, rhs, body) ->
-           consistency_check_exp (Some e) rhs;
-           consistency_check_exp (Some e) body
-
-         | Lambda (_, body) ->
-           consistency_check_exp (Some e) body
-
-         | Call (func, args) ->
-           List.iter (consistency_check_exp (Some e)) args;
-           consistency_check_exp (Some e) func
+         | Let (_, rhs, body) -> check (Some e) rhs; check (Some e) body
+         | Lambda (_, body) -> check (Some e) body
+         | Call (func, args) -> List.iter (check (Some e)) args; check (Some e) func
 
          | ExtLambda (params, body) ->
            let extvar = prog.params_extvar params in
            if not (List.mem params (prog.extvar_params extvar))
            then raise (Util.ConsistencyError "params label not in extvar list")
-           else consistency_check_exp (Some e) body
+           else check (Some e) body
 
          | ExtCall (func, args) ->
            let extvar = prog.args_extvar args in
            if not (List.mem args (prog.extvar_args extvar))
            then raise (Util.ConsistencyError "args label not in extvar list")
-           else List.iter (consistency_check_exp (Some e)) (prog.get_args args);
-                consistency_check_exp (Some e) func
+           else List.iter (check (Some e)) (prog.get_args args);
+                check (Some e) func
 
-         | If (pred, thn, els) ->
-           consistency_check_exp (Some e) pred;
-           consistency_check_exp (Some e) thn;
-           consistency_check_exp (Some e) els
+         | If (pred, thn, els) -> check (Some e) pred; check (Some e) thn; check (Some e) els
 
 (*
          | Data {dcon=_; args=_} -> () (* todo *)
@@ -289,87 +282,29 @@ let consistency_check prog =
 *)
     in
   (* check that the argsvars points to params, ty_params, and args *)
-  consistency_check_exp None prog.head
-
-let rec string_of_ty prog ty =
-  let string_of_ty_params ty_params =
-    match ty_params with
-    | [] -> ""
-    | ty :: tys ->
-      List.fold_left
-        (fun acc ty -> string_of_ty prog ty ^ " " ^ acc)
-        (string_of_ty prog ty)
-        tys
-  in
-  match prog.ty.get_ty ty with
-  | TyBool -> "Bool"
-  | TyInt -> "Int"
-  | TyList ty' -> "(List " ^ string_of_ty prog ty' ^ ")"
-  | TyArrow (params, ty_im) ->
-    "(" ^ string_of_ty_params params ^ " -> " ^ string_of_ty prog ty_im ^ ")"
-  | TyArrowExt (ty_params, ty_im) ->
-    "(" ^ string_of_ty_params (prog.ty.get_ty_params ty_params) ^ " -> " ^ string_of_ty prog ty_im ^ ")"
+  check None prog.head
 
 
 exception TypeCheckError of string
 
-let rec is_same_ty prog tyl1 tyl2 =
-  if tyl1 == tyl2
-  then true
-  else match (prog.ty.get_ty tyl1, prog.ty.get_ty tyl2) with
-       | (TyBool, TyBool) -> true
-       | (TyInt, TyInt) -> true
-       | (TyArrowExt (params1, tyb1), TyArrowExt (params2, tyb2)) ->
-         (prog.ty.ty_params_extvar params1 == prog.ty.ty_params_extvar params2)
-         && List.for_all2 (is_same_ty prog) (prog.ty.get_ty_params params1) (prog.ty.get_ty_params params2)
-         && is_same_ty prog tyb1 tyb2
-       | (_, _) -> false
-
-let is_func_producing prog tyl tylf =
-  match prog.ty.get_ty tylf with
-  | TyArrow (_, tyb) -> is_same_ty prog tyl tyb
-  | TyArrowExt (_, tyb) -> is_same_ty prog tyl tyb
-  | _ -> false
-
-let rec ty_compat_ty_label prog (ty : Type.flat_ty) (tyl : Type.ty_label) acc =
-  let check b = if b then Some acc else None in
-
-  match ty, prog.ty.get_ty tyl with
-  | FlatTyVar name, _ ->
-    (match List.assoc_opt name acc with
-     | None -> Some ((name, tyl) :: acc)
-     | Some tyl' -> check (is_same_ty prog tyl tyl'))
-  | FlatTyInt, TyInt -> Some acc
-  | FlatTyBool, TyBool -> Some acc
-  | FlatTyList ty', TyList tyl' ->
-    ty_compat_ty_label prog ty' tyl' acc
-  | FlatTyArrow (tys, ty'), TyArrow (tyls, tyl') ->
-    if List.length tys == List.length tyls
-    then List.fold_left2
-           (fun acc ty tyl ->
-              Option.bind acc (ty_compat_ty_label prog ty tyl))
-           (ty_compat_ty_label prog ty' tyl' acc)
-           (List.rev tys) tyls
-    else None
-  | _ -> None
-
 (* type check *)
-let type_check prog =
+let type_check (prog : program) =
   (* TODO: better errors *)
 
   let ensure_same_extvar ex1 ex2 =
-    if ex1 == ex2
+    if Type.ExtVar.equal ex1 ex2
     then ()
     else raise (TypeCheckError "extvar mismatch") in
 
   let ensure_same_ty tyl1 tyl2 =
-    if is_same_ty prog tyl1 tyl2
+    if Type.is_same_ty prog.ty tyl1 tyl2
     then ()
     else raise (TypeCheckError "Type mismatch") in
 
   let ensure_ty_compat ty tyl =
-    match ty_compat_ty_label prog ty tyl [] with
-    | None -> print_string (string_of_ty prog tyl); print_newline ();
+    match Type.ty_compat_ty_label prog.ty ty tyl [] with
+    | None -> print_string (Type.string_of prog.ty tyl); 
+              print_newline ();
               raise (TypeCheckError "Invalid stdlib reference")
     | Some _ -> () in
 
@@ -508,67 +443,3 @@ let check prog = (
   )
 
 
-let rec string_of_exp prog e =
-  let string_of_params params =
-    match params with
-    | [] -> ""
-    | x :: xs ->
-      List.fold_left
-        (fun acc var -> Var.to_string var ^ ", " ^ acc)
-        (Var.to_string x)
-        xs
-  in
-
-  let string_of_args =
-    List.fold_left
-      (fun acc e -> " " ^ string_of_exp prog e ^ acc)
-      ""
-  in
-
-  let node = prog.get_exp e in
-  match node.exp with
-  | Hole -> "[]"
-  | StdLibRef str -> str
-  | Var var -> Var.to_string var
-  | Let (var, rhs, body) ->
-    "(let " ^ Var.to_string var
-    ^ " = " ^ string_of_exp prog rhs
-    ^ " in " ^ string_of_exp prog body ^ ")"
-  | Lambda (params, body) ->
-    "(λ (" ^ string_of_params params ^ "). "
-    ^ string_of_exp prog body ^ ")"
-  | Call (func, args) ->
-    "(" ^ string_of_exp prog func ^ string_of_args args ^ ")"
-  | ExtLambda (params, body) ->
-    "(λ (" ^ string_of_params (prog.get_params params)
-    ^ " >" ^ Type.ExtVar.to_string (prog.params_extvar params) ^ "). "
-    ^ string_of_exp prog body ^ ")"
-  | ExtCall (func, args) ->
-    "(" ^ string_of_exp prog func ^ string_of_args (prog.get_args args)
-    ^ " >" ^ Type.ExtVar.to_string (prog.args_extvar args) ^ ")"
-  | ValInt i -> Int.to_string i
-  | ValBool b -> Bool.to_string b
-  | Empty -> "[]"
-  | Cons (e1, e2) -> "(" ^ string_of_exp prog e1 ^ " :: " ^ string_of_exp prog e2 ^ ")"
-  | Match (e1, e2, (x, y, e3)) ->
-    "(match " ^ string_of_exp prog e1 ^ " with"
-    ^ " | [] -> " ^ string_of_exp prog e2
-    ^ " | " ^ Var.to_string x ^ " :: " ^ Var.to_string y
-    ^ " -> " ^ string_of_exp prog e3 ^ ")"
-  | If (pred, thn, els) ->
-    "(if " ^ string_of_exp prog pred
-    ^ " then " ^ string_of_exp prog thn
-    ^ " else " ^ string_of_exp prog els ^ ")"
-(*
-type exp =
-  | Lambda of {
-      params : params_label;
-      body : exp_label;
-    }
-  | Call of {
-      func : exp_label;
-      args : args_label;
-      }
- *)
-
-let string_of_prog prog = string_of_exp prog prog.head
