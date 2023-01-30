@@ -308,8 +308,6 @@ let base_constructor_step (prog : Exp.program) (hole : hole_info) exp' =
    E[<>] ~> E[dcon <> ... <>]
  *)
 let data_constructor_step (prog : Exp.program) (hole : hole_info) dcon =
-  (* FUTURE: loop over data constructors for type each gets a rule *)
-  (* FUTURE: disincentivize nested data constructors. Maybe these rules all get weight 1, and there's a seperate rule for data cons that add holes that gets a higher weight when not nested. *)
   let set exp = prog.set_exp hole.label {exp=exp; ty=hole.ty_label; prev=hole.prev} in
   match prog.ty.get_ty hole.ty_label with
   | TyBool ->

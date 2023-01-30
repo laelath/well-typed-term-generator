@@ -241,6 +241,7 @@ let s rule weight =
 let main : t =
   [
     (* RULE TYPE *)                     (* IS BASE CASE? *)   (* WEIGHT *)
+    base_constructor_steps             (                        w_const          );
     data_constructor_steps             (                        w_const          );
     func_constructor_steps             (                        w_fuel           );
     var_steps                          (                        w_const          );
@@ -261,3 +262,5 @@ let main : t =
     (* --------------------------------------------------------------------------*)
     not_useless_steps                  (                        w_fuel           );
   ]
+
+
