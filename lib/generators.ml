@@ -264,3 +264,49 @@ let main : t =
   ]
 
 
+
+(* fills the hole with a monomorphic variable of the same type *)
+let mono_var_steps _weight (_prog : Exp.program) (_hole : hole_info) (_acc : rule_urn) =
+  raise Util.Unimplemented
+
+  (* fills the hole with a polymorphic variable that completely matches the type (no free type variables after unification *)
+let poly_var_steps _weight (_prog : Exp.program) (_hole : hole_info) (_acc : rule_urn) =
+  raise Util.Unimplemented
+
+(* fills the hole with a function application where the function is a monomorphic variable *)
+let mono_palka_func_steps _weight (_prog : Exp.program) (_hole : hole_info) (_acc : rule_urn) =
+  raise Util.Unimplemented
+
+(* fills the hole with a function application where the function is a polymorphic variable that completely matches *)
+let poly_palka_func_steps _weight (_prog : Exp.program) (_hole : hole_info) (_acc : rule_urn) =
+  raise Util.Unimplemented
+
+(* fills the hole with a function application where the function is a polymorphic variable that doesn't completely match. A random type is chosen for all free type variables *)
+let poly_palka_func_steps' _weight (_prog : Exp.program) (_hole : hole_info) (_acc : rule_urn) =
+  raise Util.Unimplemented
+
+(* fills the hole with a function application where the function is a hole and the input type is random *)
+let application_steps _weight (_prog : Exp.program) (_hole : hole_info) (_acc : rule_urn) =
+  raise Util.Unimplemented
+
+(* fills the hole with a seq where the lhs is a variable from the context *)
+let palka_seq_steps _weight (_prog : Exp.program) (_hole : hole_info) (_acc : rule_urn) =
+  raise Util.Unimplemented
+
+let bucket (bucket_weight : int) steps (weight : hole_info -> int) (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
+  let nested = fun () -> steps weight prog hole acc in
+  Urn.insert acc bucket_weight (Urn.Nested nested)
+
+let palka : t = 
+  [
+    bucket    4    mono_var_steps            w_const;
+    bucket    2    poly_var_steps            w_const;
+    bucket    4    mono_palka_func_steps     w_const;
+    bucket    2    poly_palka_func_steps     w_const;
+    bucket    2    poly_palka_func_steps'    w_const;
+    bucket    8    func_constructor_steps    w_const;
+    bucket    8    application_steps         w_const;
+    bucket    6    palka_seq_steps           w_const;
+  ]
+
+
