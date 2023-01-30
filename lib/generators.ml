@@ -112,13 +112,9 @@ let steps_generator (prog : Exp.program) (hole : hole_info) (acc : rule_urn)
                   Urn.insert acc (weight hole) (Urn.Value (rule prog hole a)))
              acc collection
 
-let steps_bucket_generator (prog : Exp.program) (hole : hole_info) (acc : rule_urn)
-                           (rule : Exp.program -> hole_info -> 'a -> unit -> Exp.exp_label list)
-                           (weight : hole_info -> int)
-                           (collection : 'a list) 
-                           (w : int) = 
-  let nested = fun () -> steps_generator prog hole Urn.empty rule weight collection in
-  Urn.insert acc w (Urn.Nested nested)
+let bucket (bucket_weight : hole_info -> int) steps (weight : hole_info -> int) (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
+  let nested = fun () -> steps weight prog hole acc in
+  Urn.insert acc (bucket_weight hole) (Urn.Nested nested)
 
 let singleton_generator weight f prog hole acc =
   Urn.insert acc (weight hole) (Urn.Value (f prog hole))
@@ -226,7 +222,8 @@ let func_constructor_steps weight (prog : Exp.program) (hole : hole_info) (acc :
 
 type t = ((Exp.program -> hole_info -> rule_urn -> rule_urn) list)
 
-let w_const (_ : hole_info) = 1
+let c (w : int) (_ : hole_info) = w
+let w_const = c 1
 let w_fuel (hole : hole_info) = hole.fuel+1
 let w_fuel_depth (hole : hole_info) = max 1 (hole.fuel - hole.depth)
 
@@ -264,6 +261,7 @@ let main : t =
   ]
 
 
+(* NOTES ABOUT THE BELOW: variables can come from the program context (lexical scope) or from the global environment *)
 
 (* fills the hole with a monomorphic variable of the same type *)
 let mono_var_steps _weight (_prog : Exp.program) (_hole : hole_info) (_acc : rule_urn) =
@@ -289,24 +287,32 @@ let poly_palka_func_steps' _weight (_prog : Exp.program) (_hole : hole_info) (_a
 let application_steps _weight (_prog : Exp.program) (_hole : hole_info) (_acc : rule_urn) =
   raise Util.Unimplemented
 
-(* fills the hole with a seq where the lhs is a variable from the context *)
+(* fills the hole with a seq where the lhs is a variable *)
 let palka_seq_steps _weight (_prog : Exp.program) (_hole : hole_info) (_acc : rule_urn) =
   raise Util.Unimplemented
 
-let bucket (bucket_weight : int) steps (weight : hole_info -> int) (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
-  let nested = fun () -> steps weight prog hole acc in
-  Urn.insert acc bucket_weight (Urn.Nested nested)
+let not_palka_base weight (hole : hole_info) =
+  if raise Util.Unimplemented
+ (* palkaTypeSize hole.ty_label > hole.fuel + 15 *)
+  then 0
+  else weight hole
+
+(* TODO: fix weights on these. I think the palka termination condition is 
+   typeSize t > size + 15 ---> do base case only
+*)
 
 let palka : t = 
   [
-    bucket    4    mono_var_steps            w_const;
-    bucket    2    poly_var_steps            w_const;
-    bucket    4    mono_palka_func_steps     w_const;
-    bucket    2    poly_palka_func_steps     w_const;
-    bucket    2    poly_palka_func_steps'    w_const;
-    bucket    8    func_constructor_steps    w_const;
-    bucket    8    application_steps         w_const;
-    bucket    6    palka_seq_steps           w_const;
+    (* TODO: base case *)
+    (* bucket    ?    ...                        (                 w_const) *)
+    bucket    (c 4)    mono_var_steps            (not_palka_base    w_const);
+    bucket    (c 2)    poly_var_steps            (not_palka_base    w_const);
+    bucket    (c 4)    mono_palka_func_steps     (not_palka_base    w_const);
+    bucket    (c 2)    poly_palka_func_steps     (not_palka_base    w_const);
+    bucket    (c 2)    poly_palka_func_steps'    (not_palka_base    w_const);
+    bucket    (c 8)    func_constructor_steps    (not_palka_base    w_const);
+    bucket    (c 8)    application_steps         (not_palka_base    w_const);
+    bucket    (c 6)    palka_seq_steps           (not_palka_base    w_const);
   ]
 
 

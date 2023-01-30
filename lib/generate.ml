@@ -50,6 +50,7 @@ let generate_exp (steps : Generators.t) (fuel : int) (prog : Exp.program) (e : E
     depth=Generators.exp_depth prog e;
   } in
   let steps = List.fold_left (fun acc g -> g prog hole acc) Urn.empty steps in
+  (* TODO: backtracking *)
   (Urn.sample sample steps) ()
 
 let generate (steps : Generators.t) (st : state) (prog : Exp.program) : bool =
