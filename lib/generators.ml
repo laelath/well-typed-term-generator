@@ -140,21 +140,112 @@ let match_insertion_steps weight (prog : Exp.program) (hole : hole_info) (acc : 
   let acc = steps_generator prog hole acc
                             Rules.match_insertion_step weight all_depths in
   match prog.ty.get_ty hole.ty_label with
-  | TyList _ -> 
+  | TyList _ ->
      steps_generator prog hole acc
                      Rules.match_insertion_list_step weight all_depths
   | _ -> acc
 
 
+
+(* Palka random type function *)
+module SS = Set.Make(String)
+
+let ty_vars (t : Type.flat_ty) =
+  let rec lp (t : Type.flat_ty) =
+    match t with
+    | FlatTyVar x -> SS.singleton x
+    | FlatTyBool | FlatTyInt -> SS.empty
+    | FlatTyList t' -> lp t'
+    | FlatTyArrow (ts, t') -> List.fold_left SS.union (lp t') (List.map lp ts) in
+  SS.elements (lp t)
+
+let type_size_flat =
+  let rec lp (t : Type.flat_ty) =
+    match t with
+    | FlatTyVar _ -> 1
+    | FlatTyBool | FlatTyInt | FlatTyList _ -> 1
+    | FlatTyArrow (params, res) -> List.fold_left (+) (1 + lp res) (List.map lp params) in
+  lp
+
+let type_size_lbl (prog : Exp.program) =
+  let rec lp tyl =
+    match prog.ty.get_ty tyl with
+    | TyBool | TyInt | TyList _ -> 1
+    | TyArrow (params, res) -> List.fold_left (+) (1 + lp res) (List.map lp params)
+    | TyArrowExt (params, res) ->
+      List.fold_left (+) (1 + lp res) (List.map lp (prog.ty.get_ty_params params)) in
+  lp
+
+let type_size (prog : Exp.program) t =
+  match t with
+  | Either.Left fty -> type_size_flat fty
+  | Either.Right tyl -> type_size_lbl prog tyl
+
+let is_mono_type t =
+  match t with
+  | Either.Right _ -> true
+  | Either.Left fty -> ty_vars fty == []
+
+let flat_ty_to_ty_with_mapping (prog : Exp.program) m =
+  let rec lp fty =
+  match fty with
+    | Type.FlatTyVar x -> List.assoc x m
+    | Type.FlatTyBool -> prog.ty.new_ty Type.TyBool
+    | Type.FlatTyInt -> prog.ty.new_ty Type.TyInt
+    | Type.FlatTyList fty' -> prog.ty.new_ty (Type.TyList (lp fty'))
+    | Type.FlatTyArrow (params, res) -> prog.ty.new_ty (TyArrow (List.rev_map lp params, lp res)) in
+  lp
+
+(* NOTE: using the fact that all the tys in tyls are monomorphic *)
+(* Uses all the types in the standard library by default,
+   the type labels from the context will need to be harvested by the generator that uses this. *)
+let random_type_palka (prog : Exp.program) (n : int) (tyls : Type.ty_label list) =
+  let l = List.map Either.left (List.map (fun x -> fst (snd x)) prog.std_lib)
+        @ List.map Either.right tyls in
+  (* In the palka code this function is filling all the polymorphic type variables
+     in the type with monomorphic ones *)
+  let mono_types = List.filter is_mono_type l in
+  let base m p =
+    match p with
+    | Either.Right tyl -> fun () -> tyl
+    | Either.Left fty ->
+      (* If it's a flat ty we need to instantiate all the type variables *)
+      fun () ->
+        let tvars = ty_vars fty in
+        let ty_choices = List.filter (fun x -> type_size prog x < m * 2 + 4) mono_types in
+        let ty_args = List.init (List.length tvars)
+                                (fun _ -> match (Choose.choose ty_choices) with
+                                 | Either.Left fty -> prog.ty.flat_ty_to_ty fty
+                                 | Either.Right tyl -> tyl) in
+        flat_ty_to_ty_with_mapping prog (List.combine tvars ty_args) fty
+    in
+  let weight_filter w f =
+    let l' = List.filter f l in
+    if l' == []
+    then []
+    else [(w, Choose.choose (List.map (base n) l'))] in
+  let rec aux n =
+    (Choose.choose_frequency
+       (weight_filter 4 (fun x -> type_size prog x < 3) @
+        weight_filter 4 (fun x -> type_size prog x < n + 2) @
+        weight_filter 2 (fun x -> type_size prog x < n * 2 + 8) @
+        (* TODO: create extensible arrows? *)
+        (if n > 3
+         then [(1, fun () -> prog.ty.new_ty (Type.TyArrow ([aux (n / 2)], aux (n / 2))))]
+         else []))) () in
+  aux n
+
+
+
 let create_match_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
   let lists = List.filter (fun b -> is_list_ty prog (snd b)) hole.vars in
   steps_generator prog hole acc
-                  Rules.create_match_step weight lists 
+                  Rules.create_match_step weight lists
 
 let var_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
   let ref_vars = List.filter (fun b -> Type.is_same_ty prog.ty (snd b) hole.ty_label) hole.vars in
   steps_generator prog hole acc
-                  Rules.var_step weight ref_vars 
+                  Rules.var_step weight ref_vars
 
 
 (* std_lib objects specify an occurence amount,

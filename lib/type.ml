@@ -88,7 +88,7 @@ let consistency_check ty_registry ty0 =
 
 exception BadTypeError of string
 let flat_ty_to_ty new_ty =
-  let rec lp ty = 
+  let rec lp ty =
     let ty' = match ty with
       | FlatTyVar _ -> raise (BadTypeError "Cannot generate polymorphic types")
       | FlatTyInt -> TyInt
@@ -96,7 +96,7 @@ let flat_ty_to_ty new_ty =
       | FlatTyList ty'' -> TyList (lp ty'')
       | FlatTyArrow (params, res) -> TyArrow (List.rev_map lp params, lp res) in
     new_ty ty'
-  in lp 
+  in lp
 
 let make () (*?(std_lib = [])*) =
   let ty_tbl : ty TypeLabel.Tbl.t = TypeLabel.Tbl.create 100 in
