@@ -176,7 +176,7 @@ let type_size_lbl (prog : Exp.program) =
       List.fold_left (+) (1 + lp res) (List.map lp (prog.ty.get_ty_params params)) in
   lp
 
-let type_size (prog : Exp.program) t =
+let type_size_palka (prog : Exp.program) t =
   match t with
   | Either.Left fty -> type_size_flat fty
   | Either.Right tyl -> type_size_lbl prog tyl
@@ -199,7 +199,7 @@ let flat_ty_to_ty_with_mapping (prog : Exp.program) m =
 (* NOTE: using the fact that all the tys in tyls are monomorphic *)
 (* Uses all the types in the standard library by default,
    the type labels from the context will need to be harvested by the generator that uses this. *)
-let random_type_palka (prog : Exp.program) (n : int) (tyls : Type.ty_label list) =
+let random_type_palka (prog : Exp.program) (n0 : int) (tyls : Type.ty_label list) =
   let l = List.map Either.left (List.map (fun x -> fst (snd x)) prog.std_lib)
         @ List.map Either.right tyls in
   (* In the palka code this function is filling all the polymorphic type variables
@@ -212,28 +212,27 @@ let random_type_palka (prog : Exp.program) (n : int) (tyls : Type.ty_label list)
       (* If it's a flat ty we need to instantiate all the type variables *)
       fun () ->
         let tvars = ty_vars fty in
-        let ty_choices = List.filter (fun x -> type_size prog x < m * 2 + 4) mono_types in
+        let ty_choices = List.filter (fun x -> type_size_palka prog x < m * 2 + 4) mono_types in
         let ty_args = List.init (List.length tvars)
                                 (fun _ -> match (Choose.choose ty_choices) with
                                  | Either.Left fty -> prog.ty.flat_ty_to_ty fty
                                  | Either.Right tyl -> tyl) in
         flat_ty_to_ty_with_mapping prog (List.combine tvars ty_args) fty
     in
-  let weight_filter w f =
-    let l' = List.filter f l in
-    if l' == []
-    then []
-    else [(w, Choose.choose (List.map (base n) l'))] in
   let rec aux n =
+    let weight_filter w f =
+      let l' = List.filter f l in
+      if l' == []
+      then []
+      else [(w, (fun () -> Choose.choose (List.map (base n) l') ()))] in
     (Choose.choose_frequency
-       (weight_filter 4 (fun x -> type_size prog x < 3) @
-        weight_filter 4 (fun x -> type_size prog x < n + 2) @
-        weight_filter 2 (fun x -> type_size prog x < n * 2 + 8) @
-        (* TODO: create extensible arrows? *)
+       (weight_filter 4 (fun x -> type_size_palka prog x < 3) @
+        weight_filter 4 (fun x -> type_size_palka prog x < n + 2) @
+        weight_filter 2 (fun x -> type_size_palka prog x < n * 2 + 8) @
         (if n > 3
          then [(1, fun () -> prog.ty.new_ty (Type.TyArrow ([aux (n / 2)], aux (n / 2))))]
          else []))) () in
-  aux n
+  aux n0
 
 
 
