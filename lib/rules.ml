@@ -282,7 +282,8 @@ let std_lib_step (prog : Exp.program) (hole : hole_info) x =
    FIXME
    E[<>] ~> 
  *)
-let std_lib_palka_rule_step (prog : Exp.program) (hole : hole_info) (f, tys, mp) =
+(* TODO: get rid of tys here? *)
+let std_lib_palka_rule_step (prog : Exp.program) (hole : hole_info) (f, _ty, tys, mp) =
   fun () ->
   Debug.run (fun () -> Printf.eprintf ("creating std lib palka call: %s\n") f);
   let (_, tyls) = List.fold_left_map (ty_label_from_ty prog) mp (List.rev tys) in
@@ -366,3 +367,17 @@ let func_constructor_step (prog : Exp.program) (hole : hole_info) =
      [body]
   | _ -> fun () ->
          raise (Util.Impossible "function constructor on non-function type")
+
+let application_step (prog : Exp.program) (hole : hole_info) tys = 
+  fun () ->
+  Debug.run (fun () -> Printf.eprintf ("creating application\n"));
+  let func = prog.new_exp {exp=Exp.Hole;
+                           ty=prog.ty.new_ty (TyArrow (tys, hole.ty_label));
+                           prev=Some hole.label} in
+  let args = List.map (fun ty -> prog.new_exp {exp=Exp.Hole; 
+                                               ty=ty;
+                                               prev=Some hole.label}) tys in
+  let holes = [func] @ args in
+  prog.set_exp hole.label {exp=Exp.Call (func, args); ty=hole.ty_label; prev=hole.prev};
+  holes
+

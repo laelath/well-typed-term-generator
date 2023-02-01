@@ -97,56 +97,6 @@ let is_list_ty (prog : Exp.program) ty =
   | _ -> false
 
 
-
-(*
-  TRANSITIONS
- *)
-
-type rule_urn = (unit -> Exp.exp_label list) Urn.t
-
-let steps_generator (prog : Exp.program) (hole : hole_info) (acc : rule_urn)
-                    (rule : Exp.program -> hole_info -> 'a -> unit -> Exp.exp_label list)
-                    (weight : hole_info -> int)
-                    (collection : 'a list) = 
-  List.fold_left (fun acc a ->
-                  Urn.insert acc (weight hole) (Urn.Value (rule prog hole a)))
-             acc collection
-
-let bucket (bucket_weight : hole_info -> int) steps (weight : hole_info -> int) (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
-  let nested = fun () -> steps weight prog hole acc in
-  Urn.insert acc (bucket_weight hole) (Urn.Nested nested)
-
-let singleton_generator weight f prog hole acc =
-  Urn.insert acc (weight hole) (Urn.Value (f prog hole))
-
-
-
-let not_useless_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
-  let params = find_enclosing_lambdas prog hole.label in
-  steps_generator prog hole acc
-                  Rules.not_useless_step weight params
-
-let palka_rule_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
-  let funcs = List.filter (fun b -> Type.is_func_producing prog.ty hole.ty_label (snd b)) hole.vars in
-  steps_generator prog hole acc
-                  Rules.palka_rule_step weight funcs
-
-let let_insertion_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
-  steps_generator prog hole acc
-                  Rules.let_insertion_step weight (List.init (hole.depth + 1) (fun x -> x))
-
-let match_insertion_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
-  let all_depths = List.init (hole.depth + 1) (fun x -> x) in
-  let acc = steps_generator prog hole acc
-                            Rules.match_insertion_step weight all_depths in
-  match prog.ty.get_ty hole.ty_label with
-  | TyList _ ->
-     steps_generator prog hole acc
-                     Rules.match_insertion_list_step weight all_depths
-  | _ -> acc
-
-
-
 (* Palka random type function *)
 module SS = Set.Make(String)
 
@@ -199,7 +149,7 @@ let flat_ty_to_ty_with_mapping (prog : Exp.program) m =
 (* NOTE: using the fact that all the tys in tyls are monomorphic *)
 (* Uses all the types in the standard library by default,
    the type labels from the context will need to be harvested by the generator that uses this. *)
-let random_type_palka (prog : Exp.program) (n0 : int) (tyls : Type.ty_label list) =
+let random_type_palka_helper (prog : Exp.program) (n0 : int) (tyls : Type.ty_label list) =
   let l = List.map Either.left (List.map (fun x -> fst (snd x)) prog.std_lib)
         @ List.map Either.right tyls in
   (* In the palka code this function is filling all the polymorphic type variables
@@ -235,6 +185,89 @@ let random_type_palka (prog : Exp.program) (n0 : int) (tyls : Type.ty_label list
   aux n0
 
 
+let random_type_palka prog n vars =
+  let tyls = List.map (fun _x -> raise Util.Unimplemented) vars in
+  random_type_palka_helper prog n tyls
+
+(* std_lib objects specify an occurence amount,
+   objects are filtered so they can be selected 1/n of the time they are valid choices *)
+let find_std_lib_refs (prog : Exp.program) tyl filter =
+  List.filter_map
+    (fun (x, (ty, n)) ->
+       if Random.int n <> 0
+       then None
+       else if filter (x, (ty, n))
+       then Option.map (fun _ -> x) (Type.ty_compat_ty_label prog.ty ty tyl [])
+       else None)
+    prog.std_lib
+
+(* finds all functions in the standard library that can produce tyl *)
+let find_std_lib_funcs (prog : Exp.program) tyl filter =
+  List.filter_map
+    (fun (x, (ty, n)) ->
+       if Random.int n <> 0
+       then None
+       else if filter (x, (ty, n))
+       then  match ty with
+            | Type.FlatTyArrow (tys, ty') ->
+              (match Type.ty_compat_ty_label prog.ty ty' tyl [] with
+               | None -> None
+               | Some mp -> Some (x, ty, tys, mp))
+            | _ -> None
+       else None)
+    prog.std_lib
+
+
+
+(*
+  TRANSITIONS
+ *)
+
+type rule_urn = (unit -> Exp.exp_label list) Urn.t
+
+let steps_generator (prog : Exp.program) (hole : hole_info) (acc : rule_urn)
+                    (rule : Exp.program -> hole_info -> 'a -> unit -> Exp.exp_label list)
+                    (weight : hole_info -> int)
+                    (collection : 'a list) = 
+  List.fold_left (fun acc a ->
+                  Urn.insert acc (weight hole) (Urn.Value (rule prog hole a)))
+             acc collection
+
+let bucket (bucket_weight : hole_info -> int) steps (weight : hole_info -> int) (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
+  let nested = fun () -> steps weight prog hole acc in
+  Urn.insert acc (bucket_weight hole) (Urn.Nested nested)
+
+let singleton_generator weight f prog hole acc =
+  Urn.insert acc (weight hole) (Urn.Value (f prog hole))
+
+
+
+let not_useless_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
+  let params = find_enclosing_lambdas prog hole.label in
+  steps_generator prog hole acc
+                  Rules.not_useless_step weight params
+
+let palka_rule_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
+  let funcs = List.filter (fun b -> Type.is_func_producing prog.ty hole.ty_label (snd b)) hole.vars in
+  steps_generator prog hole acc
+                  Rules.palka_rule_step weight funcs
+
+let let_insertion_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
+  steps_generator prog hole acc
+                  Rules.let_insertion_step weight (List.init (hole.depth + 1) (fun x -> x))
+
+let match_insertion_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
+  let all_depths = List.init (hole.depth + 1) (fun x -> x) in
+  let acc = steps_generator prog hole acc
+                            Rules.match_insertion_step weight all_depths in
+  match prog.ty.get_ty hole.ty_label with
+  | TyList _ ->
+     steps_generator prog hole acc
+                     Rules.match_insertion_list_step weight all_depths
+  | _ -> acc
+
+
+
 
 let create_match_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
   let lists = List.filter (fun b -> is_list_ty prog (snd b)) hole.vars in
@@ -247,39 +280,15 @@ let var_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
                   Rules.var_step weight ref_vars
 
 
-(* std_lib objects specify an occurence amount,
-   objects are filtered so they can be selected 1/n of the time they are valid choices *)
-let find_std_lib_refs (prog : Exp.program) tyl =
-  List.filter_map
-    (fun (x, (ty, n)) ->
-       if Random.int n <> 0
-       then None
-       else Option.map (fun _ -> x) (Type.ty_compat_ty_label prog.ty ty tyl []))
-    prog.std_lib
-
 let std_lib_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
-  let valid_refs = find_std_lib_refs prog hole.ty_label in
+  let valid_refs = find_std_lib_refs prog hole.ty_label (fun _ -> false) in
   (* TODO: incorporate occurence amount here *)
   steps_generator prog hole acc
                   Rules.std_lib_step weight valid_refs
 
-(* finds all functions in the standard library that can produce tyl *)
-let find_std_lib_funcs (prog : Exp.program) tyl =
-  List.filter_map
-    (fun (x, (ty, n)) ->
-       if Random.int n <> 0
-       then None
-       else match ty with
-            | Type.FlatTyArrow (tys, ty') ->
-              (match Type.ty_compat_ty_label prog.ty ty' tyl [] with
-               | None -> None
-               | Some mp -> Some (x, tys, mp))
-            | _ -> None)
-    prog.std_lib
-
 
 let std_lib_palka_rule_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
-  let valid_refs = find_std_lib_funcs prog hole.ty_label in
+  let valid_refs = find_std_lib_funcs prog hole.ty_label (fun _ -> true) in
   (* TODO: incorporate occurence amount here *)
   steps_generator prog hole acc
                   Rules.std_lib_palka_rule_step weight valid_refs
@@ -353,33 +362,116 @@ let main : t =
 
 (* NOTES ABOUT THE BELOW: variables can come from the program context (lexical scope) or from the global environment *)
 
+(* TODO: obviously some common structure here. figure out how to factor it out *)
+
 (* fills the hole with a monomorphic variable of the same type *)
-let mono_var_steps _weight (_prog : Exp.program) (_hole : hole_info) (_acc : rule_urn) =
-  raise Util.Unimplemented
+let mono_var_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
+  (* inspects variables *)
+  let acc = 
+    let filter b = Type.is_same_ty prog.ty (snd b) hole.ty_label && is_mono_type (Either.Right (snd b)) in
+    let ref_vars = List.filter filter hole.vars in
+    steps_generator prog hole acc
+                    Rules.var_step weight ref_vars in
+  (* inspects std_lib *)
+  let acc =
+    let valid_refs = find_std_lib_refs prog hole.ty_label (fun (_, (ty, _)) -> is_mono_type (Either.Left ty)) in
+    (* TODO: incorporate occurence amount here *)
+    steps_generator prog hole acc
+                    Rules.std_lib_step weight valid_refs in
+  acc
 
   (* fills the hole with a polymorphic variable that completely matches the type (no free type variables after unification *)
-let poly_var_steps _weight (_prog : Exp.program) (_hole : hole_info) (_acc : rule_urn) =
-  raise Util.Unimplemented
+let poly_var_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
+  (* inspects variables *)
+  let acc = 
+    let filter b = Type.is_same_ty prog.ty (snd b) hole.ty_label &&
+                     (not (is_mono_type (Either.Right (snd b)))) in
+    let ref_vars = List.filter filter hole.vars in
+    steps_generator prog hole acc
+                    Rules.var_step weight ref_vars in
+  (* inspects std_lib *)
+  let acc =
+    let valid_refs = find_std_lib_refs prog hole.ty_label (fun (_, (ty, _)) -> not (is_mono_type (Either.Left ty))) in
+    (* TODO: incorporate occurence amount here *)
+    steps_generator prog hole acc
+                    Rules.std_lib_step weight valid_refs in
+  acc
 
 (* fills the hole with a function application where the function is a monomorphic variable *)
-let mono_palka_func_steps _weight (_prog : Exp.program) (_hole : hole_info) (_acc : rule_urn) =
-  raise Util.Unimplemented
+let mono_palka_func_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
+  (* inspects variables *)
+  let acc = 
+    let filter b = 
+      Type.is_func_producing prog.ty hole.ty_label (snd b) && 
+        is_mono_type (Either.Right (snd b)) in
+    let funcs = List.filter filter hole.vars in
+    steps_generator prog hole acc
+                    Rules.palka_rule_step weight funcs in
+  (* inspects std_lib *)
+  let acc =
+    let valid_refs = find_std_lib_funcs prog hole.ty_label (fun ty -> is_mono_type (Either.Right ty)) in
+    (* TODO: incorporate occurence amount here *)
+    steps_generator prog hole acc
+                    Rules.std_lib_palka_rule_step weight valid_refs in
+  acc
 
 (* fills the hole with a function application where the function is a polymorphic variable that completely matches *)
-let poly_palka_func_steps _weight (_prog : Exp.program) (_hole : hole_info) (_acc : rule_urn) =
-  raise Util.Unimplemented
+let poly_palka_func_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
+  (* inspects variables *)
+  let acc = 
+    let filter b = Type.is_func_producing prog.ty hole.ty_label (snd b) && 
+                     (not (is_mono_type (Either.Right (snd b)))) in
+    let funcs = List.filter filter hole.vars in
+    steps_generator prog hole acc
+                    Rules.palka_rule_step weight funcs in
+  (* inspects std_lib *)
+  let acc =
+    let valid_refs = find_std_lib_funcs prog hole.ty_label (fun ty -> not (is_mono_type (Either.Left (fst (snd ty))))) in
+    (* TODO: check that all types were instantiated. how to do this? *)
+    steps_generator prog hole acc
+                    Rules.std_lib_palka_rule_step weight valid_refs in
+  acc
 
 (* fills the hole with a function application where the function is a polymorphic variable that doesn't completely match. A random type is chosen for all free type variables *)
-let poly_palka_func_steps' _weight (_prog : Exp.program) (_hole : hole_info) (_acc : rule_urn) =
-  raise Util.Unimplemented
+let poly_palka_func_steps_random weight (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
+  (* inspects variables *)
+  let acc = 
+    let filter b = Type.is_func_producing prog.ty hole.ty_label (snd b) && 
+                     (not (is_mono_type (Either.Right (snd b)))) in
+    let funcs = List.filter filter hole.vars in
+    steps_generator prog hole acc
+                    Rules.palka_rule_step weight funcs in
+  (* inspects std_lib *)
+  let acc =
+    let valid_refs = find_std_lib_funcs prog hole.ty_label (fun (_, (ty, _)) -> not (is_mono_type (Either.Left ty))) in
+    (* TODO: check that all types weren't instantiated. how to do this? 
+       for each, create a random type (and extend the `mp` map?)
+       let n = (* program depth? *) raise Util.Unimplemented in
+       let ty = random_type_palka prog n hole.vars
+
+       Ok. 
+       Looks like we should change the behavior of ty_label_from_ty in Rules.ml 
+       to assume that mp is total. Then, check if it's total here and if not, extend it
+
+     *)
+    steps_generator prog hole acc
+                    Rules.std_lib_palka_rule_step weight valid_refs in
+  acc
 
 (* fills the hole with a function application where the function is a hole and the input type is random *)
-let application_steps _weight (_prog : Exp.program) (_hole : hole_info) (_acc : rule_urn) =
-  raise Util.Unimplemented
+let application_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
+  let n = (* program depth? *) raise Util.Unimplemented in
+  (* just a singleton list *)
+  let random_arg_types = [random_type_palka prog n hole.vars] in
+  steps_generator prog hole acc 
+                  Rules.application_step weight [random_arg_types]
 
 (* fills the hole with a seq where the lhs is a variable *)
-let palka_seq_steps _weight (_prog : Exp.program) (_hole : hole_info) (_acc : rule_urn) =
-  raise Util.Unimplemented
+let palka_seq_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
+  (* technically palka can put std lib functions in the seq position... *)
+  steps_generator prog hole acc 
+                  (raise Util.Unimplemented) weight hole.vars
+
 
 let not_palka_base weight (hole : hole_info) =
   if raise Util.Unimplemented
@@ -394,15 +486,15 @@ let not_palka_base weight (hole : hole_info) =
 let palka : t = 
   [
     (* TODO: base case *)
-    (* bucket    ?    ...                        (                 w_const) *)
-    bucket    (c 4)    mono_var_steps            (not_palka_base    w_const);
-    bucket    (c 2)    poly_var_steps            (not_palka_base    w_const);
-    bucket    (c 4)    mono_palka_func_steps     (not_palka_base    w_const);
-    bucket    (c 2)    poly_palka_func_steps     (not_palka_base    w_const);
-    bucket    (c 2)    poly_palka_func_steps'    (not_palka_base    w_const);
-    bucket    (c 8)    func_constructor_steps    (not_palka_base    w_const);
-    bucket    (c 8)    application_steps         (not_palka_base    w_const);
-    bucket    (c 6)    palka_seq_steps           (not_palka_base    w_const);
+    (* bucket    ?    ...                              (                 w_const) *)
+    bucket    (c 4)    mono_var_steps                  (not_palka_base    w_const);
+    bucket    (c 2)    poly_var_steps                  (not_palka_base    w_const);
+    bucket    (c 4)    mono_palka_func_steps           (not_palka_base    w_const);
+    bucket    (c 2)    poly_palka_func_steps           (not_palka_base    w_const);
+    bucket    (c 2)    poly_palka_func_steps_random    (not_palka_base    w_const);
+    bucket    (c 8)    func_constructor_steps          (not_palka_base    w_const);
+    bucket    (c 8)    application_steps               (not_palka_base    w_const);
+    bucket    (c 6)    palka_seq_steps                 (not_palka_base    w_const);
   ]
 
 
