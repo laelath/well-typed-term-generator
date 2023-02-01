@@ -186,7 +186,7 @@ let random_type_palka_helper (prog : Exp.program) (n0 : int) (tyls : Type.ty_lab
 
 
 let random_type_palka prog n vars =
-  let tyls = List.map (fun _x -> raise Util.Unimplemented) vars in
+  let tyls = List.map (fun (x, ty) -> ty) vars in
   random_type_palka_helper prog n tyls
 
 (* std_lib objects specify an occurence amount,
@@ -446,8 +446,7 @@ let poly_palka_func_steps_random weight (prog : Exp.program) (hole : hole_info) 
     let valid_refs = find_std_lib_funcs prog hole.ty_label (fun (_, (ty, _)) -> not (is_mono_type (Either.Left ty))) in
     (* TODO: check that all types weren't instantiated. how to do this? 
        for each, create a random type (and extend the `mp` map?)
-       let n = (* program depth? *) raise Util.Unimplemented in
-       let ty = random_type_palka prog n hole.vars
+       let ty = random_type_palka prog hole.depth hole.vars
 
        Ok. 
        Looks like we should change the behavior of ty_label_from_ty in Rules.ml 
@@ -460,9 +459,8 @@ let poly_palka_func_steps_random weight (prog : Exp.program) (hole : hole_info) 
 
 (* fills the hole with a function application where the function is a hole and the input type is random *)
 let application_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
-  let n = (* program depth? *) raise Util.Unimplemented in
   (* just a singleton list *)
-  let random_arg_types = [random_type_palka prog n hole.vars] in
+  let random_arg_types = [random_type_palka prog hole.depth hole.vars] in
   steps_generator prog hole acc 
                   Rules.application_step weight [random_arg_types]
 
