@@ -100,6 +100,7 @@ let is_list_ty (prog : Exp.program) ty =
 (* Palka random type function *)
 module SS = Set.Make(String)
 
+(* FIXME: why convert to a list?? *)
 let ty_vars (t : Type.flat_ty) =
   let rec lp (t : Type.flat_ty) =
     match t with
@@ -184,10 +185,15 @@ let random_type_palka_helper (prog : Exp.program) (n0 : int) (tyls : Type.ty_lab
          else []))) () in
   aux n0
 
-
 let random_type_palka prog n vars =
-  let tyls = List.map (fun (x, ty) -> ty) vars in
+  let tyls = List.map (fun (_, ty) -> ty) vars in
   random_type_palka_helper prog n tyls
+
+(* FIXME: 
+   I think we need to patch up places that instantiated std lib refs. 
+   The previous bevahior was generating a random type with the function in old.ml
+   when there was unresolved polymorphism but now I've made it raise an exception. 
+   This means we have to resolve all the polymorphism before going calling the Rules function *)
 
 (* std_lib objects specify an occurence amount,
    objects are filtered so they can be selected 1/n of the time they are valid choices *)
@@ -427,7 +433,14 @@ let poly_palka_func_steps weight (prog : Exp.program) (hole : hole_info) (acc : 
   (* inspects std_lib *)
   let acc =
     let valid_refs = find_std_lib_funcs prog hole.ty_label (fun ty -> not (is_mono_type (Either.Left (fst (snd ty))))) in
-    (* TODO: check that all types were instantiated. how to do this? *)
+    (* TODO: calling ty_vars twice - once here once in filter *)
+    let valid_refs = List.filter_map (fun (x, ty, tys, mp) ->
+                         let vars = ty_vars ty in
+                         let vars = List.filter (fun ty_var -> List.assoc_opt ty_var mp = None) vars in
+                         if vars = []
+                         then Some (x, ty, tys, mp)
+                         else None)
+                                     valid_refs in
     steps_generator prog hole acc
                     Rules.std_lib_palka_rule_step weight valid_refs in
   acc
@@ -443,16 +456,18 @@ let poly_palka_func_steps_random weight (prog : Exp.program) (hole : hole_info) 
                     Rules.palka_rule_step weight funcs in
   (* inspects std_lib *)
   let acc =
-    let valid_refs = find_std_lib_funcs prog hole.ty_label (fun (_, (ty, _)) -> not (is_mono_type (Either.Left ty))) in
-    (* TODO: check that all types weren't instantiated. how to do this? 
-       for each, create a random type (and extend the `mp` map?)
-       let ty = random_type_palka prog hole.depth hole.vars
-
-       Ok. 
-       Looks like we should change the behavior of ty_label_from_ty in Rules.ml 
-       to assume that mp is total. Then, check if it's total here and if not, extend it
-
-     *)
+    let filter (_, (ty, _)) = not (is_mono_type (Either.Left ty)) in
+    let valid_refs = find_std_lib_funcs prog hole.ty_label filter in
+    (* TODO: calling ty_vars twice - once here once in filter *)
+    let valid_refs = List.filter_map (fun (x, ty, tys, mp) ->
+                         let vars = ty_vars ty in
+                         let vars = List.filter (fun ty_var -> List.assoc_opt ty_var mp = None) vars in
+                         if vars = []
+                         then None
+                         else
+                           let mp = (List.map (fun var -> (var, random_type_palka prog hole.depth hole.vars)) vars) @ mp in
+                           Some (x, ty, tys, mp))
+                                     valid_refs in
     steps_generator prog hole acc
                     Rules.std_lib_palka_rule_step weight valid_refs in
   acc

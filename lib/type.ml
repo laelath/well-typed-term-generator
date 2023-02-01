@@ -173,6 +173,7 @@ let is_func_producing ty_registry tyl tylf =
   | TyArrowExt (_, tyb) -> is_same_ty ty_registry tyl tyb
   | _ -> false
 
+(* FIXME: why does this use an assoc list?? *)
 let rec ty_compat_ty_label (ty_registry : registry) (ty : flat_ty) (tyl : ty_label) acc =
   let check b = if b then Some acc else None in
 

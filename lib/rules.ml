@@ -20,21 +20,15 @@ let rec find_pos (prog : Exp.program) (e : Exp.exp_label) (height : int) =
        | None -> e
        | Some e' -> find_pos prog e' (height - 1)
 
-(* TODO: pass full list of in-scope variables here *)
-let rec generate_type size (prog : Exp.program) =
-  prog.ty.new_ty
-    ((Choose.choose_frequency
-        [(1, (fun _ -> Type.TyBool)); (1, (fun _ -> Type.TyInt));
-         (size, (fun _ -> Type.TyList (generate_type (size - 1) prog)))])
-     ())
+exception UnresolvedPolymorphism
+
 
 (* TODO: merge this with Type.flat_ty_to_ty / prog.ty.flat_ty_to_ty *)
-let rec ty_label_from_ty prog mp ty =
+let rec ty_label_from_ty (prog : Exp.program) mp ty =
   match ty with
   | Type.FlatTyVar var ->
     (match List.assoc_opt var mp with
-     | None -> let tyl = generate_type 3 prog in
-               ((var, tyl) :: mp, tyl)
+     | None -> raise UnresolvedPolymorphism
      | Some tyl -> (mp, tyl))
   | Type.FlatTyInt -> (mp, prog.ty.new_ty Type.TyInt)
   | Type.FlatTyBool -> (mp, prog.ty.new_ty Type.TyBool)
@@ -45,23 +39,6 @@ let rec ty_label_from_ty prog mp ty =
     let (mp, tyl') = ty_label_from_ty prog mp ty' in
     let (mp, tys') = List.fold_left_map (ty_label_from_ty prog) mp (List.rev tys) in
     (mp, prog.ty.new_ty (Type.TyArrow (tys', tyl')))
-
-(* TODO: use this again *)
-let rec type_complexity (prog : Exp.program) (ty : Type.ty_label) =
-  match prog.ty.get_ty ty with
-  | Type.TyBool -> 1
-  | Type.TyInt -> 1
-  | Type.TyList ty' -> 2 + type_complexity prog ty'
-  | Type.TyArrow (params, ty') ->
-    List.fold_left
-      (fun acc ty'' -> acc + type_complexity prog ty'')
-      (1 + type_complexity prog ty')
-      params
-  | Type.TyArrowExt (params, ty') ->
-    List.fold_left
-      (fun acc ty'' -> acc + type_complexity prog ty'')
-      (1 + type_complexity prog ty')
-      (prog.ty.get_ty_params params)
 
 (* END UTILS *)
 
