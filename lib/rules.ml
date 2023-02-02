@@ -345,16 +345,30 @@ let func_constructor_step (prog : Exp.program) (hole : hole_info) =
   | _ -> fun () ->
          raise (Util.Impossible "function constructor on non-function type")
 
-let application_step (prog : Exp.program) (hole : hole_info) tys = 
+let application_step (prog : Exp.program) (hole : hole_info) tys =
   fun () ->
   Debug.run (fun () -> Printf.eprintf ("creating application\n"));
   let func = prog.new_exp {exp=Exp.Hole;
                            ty=prog.ty.new_ty (TyArrow (tys, hole.ty_label));
                            prev=Some hole.label} in
-  let args = List.map (fun ty -> prog.new_exp {exp=Exp.Hole; 
+  let args = List.map (fun ty -> prog.new_exp {exp=Exp.Hole;
                                                ty=ty;
                                                prev=Some hole.label}) tys in
   let holes = [func] @ args in
   prog.set_exp hole.label {exp=Exp.Call (func, args); ty=hole.ty_label; prev=hole.prev};
   holes
 
+let seq_step (prog : Exp.program) (hole : hole_info) (var : Exp.var * Type.ty_label) =
+  fun () ->
+  Debug.run (fun () -> Printf.eprintf ("creating seq\n"));
+  let seq = prog.new_exp {exp=Exp.StdLibRef "seq";
+                          ty=prog.ty.new_ty (TyArrow ([snd var; hole.ty_label], hole.ty_label));
+                          prev=Some hole.label} in
+  let ref = prog.new_exp {exp=Exp.Var (fst var);
+                          ty=snd var;
+                          prev=Some seq} in
+  let hole' = prog.new_exp {exp=Exp.Hole;
+                           ty=hole.ty_label;
+                           prev=Some seq} in
+  prog.set_exp hole.label {exp=Exp.Call (seq, [ref; hole']); ty=hole.ty_label; prev=hole.prev};
+  [hole]

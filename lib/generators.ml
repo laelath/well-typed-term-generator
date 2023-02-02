@@ -1,9 +1,9 @@
 
-(* TODO: 
+(* TODO:
    - remove from Urn
    - on Urn insert check if weight is 0
    - factor out constructor steps (can we avoid duplicating of type check?)
-   - 
+   -
  *)
 
 (*
@@ -189,10 +189,10 @@ let random_type_palka prog n vars =
   let tyls = List.map (fun (_, ty) -> ty) vars in
   random_type_palka_helper prog n tyls
 
-(* FIXME: 
-   I think we need to patch up places that instantiated std lib refs. 
+(* FIXME:
+   I think we need to patch up places that instantiated std lib refs.
    The previous bevahior was generating a random type with the function in old.ml
-   when there was unresolved polymorphism but now I've made it raise an exception. 
+   when there was unresolved polymorphism but now I've made it raise an exception.
    This means we have to resolve all the polymorphism before going calling the Rules function *)
 
 (* std_lib objects specify an occurence amount,
@@ -234,7 +234,7 @@ type rule_urn = (unit -> Exp.exp_label list) Urn.t
 let steps_generator (prog : Exp.program) (hole : hole_info) (acc : rule_urn)
                     (rule : Exp.program -> hole_info -> 'a -> unit -> Exp.exp_label list)
                     (weight : hole_info -> int)
-                    (collection : 'a list) = 
+                    (collection : 'a list) =
   List.fold_left (fun acc a ->
                   Urn.insert acc (weight hole) (Urn.Value (rule prog hole a)))
              acc collection
@@ -373,7 +373,7 @@ let main : t =
 (* fills the hole with a monomorphic variable of the same type *)
 let mono_var_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
   (* inspects variables *)
-  let acc = 
+  let acc =
     let filter b = Type.is_same_ty prog.ty (snd b) hole.ty_label && is_mono_type (Either.Right (snd b)) in
     let ref_vars = List.filter filter hole.vars in
     steps_generator prog hole acc
@@ -389,7 +389,7 @@ let mono_var_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_ur
   (* fills the hole with a polymorphic variable that completely matches the type (no free type variables after unification *)
 let poly_var_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
   (* inspects variables *)
-  let acc = 
+  let acc =
     let filter b = Type.is_same_ty prog.ty (snd b) hole.ty_label &&
                      (not (is_mono_type (Either.Right (snd b)))) in
     let ref_vars = List.filter filter hole.vars in
@@ -406,9 +406,9 @@ let poly_var_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_ur
 (* fills the hole with a function application where the function is a monomorphic variable *)
 let mono_palka_func_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
   (* inspects variables *)
-  let acc = 
-    let filter b = 
-      Type.is_func_producing prog.ty hole.ty_label (snd b) && 
+  let acc =
+    let filter b =
+      Type.is_func_producing prog.ty hole.ty_label (snd b) &&
         is_mono_type (Either.Right (snd b)) in
     let funcs = List.filter filter hole.vars in
     steps_generator prog hole acc
@@ -424,8 +424,8 @@ let mono_palka_func_steps weight (prog : Exp.program) (hole : hole_info) (acc : 
 (* fills the hole with a function application where the function is a polymorphic variable that completely matches *)
 let poly_palka_func_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
   (* inspects variables *)
-  let acc = 
-    let filter b = Type.is_func_producing prog.ty hole.ty_label (snd b) && 
+  let acc =
+    let filter b = Type.is_func_producing prog.ty hole.ty_label (snd b) &&
                      (not (is_mono_type (Either.Right (snd b)))) in
     let funcs = List.filter filter hole.vars in
     steps_generator prog hole acc
@@ -448,8 +448,8 @@ let poly_palka_func_steps weight (prog : Exp.program) (hole : hole_info) (acc : 
 (* fills the hole with a function application where the function is a polymorphic variable that doesn't completely match. A random type is chosen for all free type variables *)
 let poly_palka_func_steps_random weight (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
   (* inspects variables *)
-  let acc = 
-    let filter b = Type.is_func_producing prog.ty hole.ty_label (snd b) && 
+  let acc =
+    let filter b = Type.is_func_producing prog.ty hole.ty_label (snd b) &&
                      (not (is_mono_type (Either.Right (snd b)))) in
     let funcs = List.filter filter hole.vars in
     steps_generator prog hole acc
@@ -465,6 +465,7 @@ let poly_palka_func_steps_random weight (prog : Exp.program) (hole : hole_info) 
                          if vars = []
                          then None
                          else
+                           (* FIXME: size should be *inverse* to hole depth *)
                            let mp = (List.map (fun var -> (var, random_type_palka prog hole.depth hole.vars)) vars) @ mp in
                            Some (x, ty, tys, mp))
                                      valid_refs in
@@ -475,15 +476,17 @@ let poly_palka_func_steps_random weight (prog : Exp.program) (hole : hole_info) 
 (* fills the hole with a function application where the function is a hole and the input type is random *)
 let application_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
   (* just a singleton list *)
+  (* FIXME: size should be *inverse* to hole depth *)
   let random_arg_types = [random_type_palka prog hole.depth hole.vars] in
-  steps_generator prog hole acc 
+  steps_generator prog hole acc
                   Rules.application_step weight [random_arg_types]
 
 (* fills the hole with a seq where the lhs is a variable *)
 let palka_seq_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
   (* technically palka can put std lib functions in the seq position... *)
-  steps_generator prog hole acc 
-                  (raise Util.Unimplemented) weight hole.vars
+  (* ... but we'll just ignore that *)
+  steps_generator prog hole acc
+                  Rules.seq_step weight hole.vars
 
 
 let not_palka_base weight (hole : hole_info) =
@@ -492,11 +495,11 @@ let not_palka_base weight (hole : hole_info) =
   then 0
   else weight hole
 
-(* TODO: fix weights on these. I think the palka termination condition is 
+(* TODO: fix weights on these. I think the palka termination condition is
    typeSize t > size + 15 ---> do base case only
 *)
 
-let palka : t = 
+let palka : t =
   [
     (* TODO: base case *)
     (* bucket    ?    ...                              (                 w_const) *)
