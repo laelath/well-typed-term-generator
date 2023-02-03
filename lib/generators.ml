@@ -98,19 +98,7 @@ let is_list_ty (prog : Exp.program) ty =
 
 
 (* Palka random type function *)
-module SS = Set.Make(String)
-
-(* FIXME: why convert to a list?? *)
-let ty_vars (t : Type.flat_ty) =
-  let rec lp (t : Type.flat_ty) =
-    match t with
-    | FlatTyVar x -> SS.singleton x
-    | FlatTyBool | FlatTyInt -> SS.empty
-    | FlatTyList t' -> lp t'
-    | FlatTyArrow (ts, t') -> List.fold_left SS.union (lp t') (List.map lp ts) in
-  SS.elements (lp t)
-
-let type_size_flat =
+let type_size_flat_palka =
   let rec lp (t : Type.flat_ty) =
     match t with
     | FlatTyVar _ -> 1
@@ -118,7 +106,7 @@ let type_size_flat =
     | FlatTyArrow (params, res) -> List.fold_left (+) (1 + lp res) (List.map lp params) in
   lp
 
-let type_size_lbl (prog : Exp.program) =
+let type_size_lbl_palka (prog : Exp.program) =
   let rec lp tyl =
     match prog.ty.get_ty tyl with
     | TyBool | TyInt | TyList _ -> 1
@@ -129,23 +117,13 @@ let type_size_lbl (prog : Exp.program) =
 
 let type_size_palka (prog : Exp.program) t =
   match t with
-  | Either.Left fty -> type_size_flat fty
-  | Either.Right tyl -> type_size_lbl prog tyl
+  | Either.Left fty -> type_size_flat_palka fty
+  | Either.Right tyl -> type_size_lbl_palka prog tyl
 
 let is_mono_type t =
   match t with
   | Either.Right _ -> true
-  | Either.Left fty -> ty_vars fty == []
-
-let flat_ty_to_ty_with_mapping (prog : Exp.program) m =
-  let rec lp fty =
-  match fty with
-    | Type.FlatTyVar x -> List.assoc x m
-    | Type.FlatTyBool -> prog.ty.new_ty Type.TyBool
-    | Type.FlatTyInt -> prog.ty.new_ty Type.TyInt
-    | Type.FlatTyList fty' -> prog.ty.new_ty (Type.TyList (lp fty'))
-    | Type.FlatTyArrow (params, res) -> prog.ty.new_ty (TyArrow (List.rev_map lp params, lp res)) in
-  lp
+  | Either.Left fty -> Util.SS.is_empty (Type.ty_vars fty)
 
 (* NOTE: using the fact that all the tys in tyls are monomorphic *)
 (* Uses all the types in the standard library by default,
@@ -162,13 +140,13 @@ let random_type_palka_helper (prog : Exp.program) (n0 : int) (tyls : Type.ty_lab
     | Either.Left fty ->
       (* If it's a flat ty we need to instantiate all the type variables *)
       fun () ->
-        let tvars = ty_vars fty in
+        let tvars = Util.SS.elements (Type.ty_vars fty) in
         let ty_choices = List.filter (fun x -> type_size_palka prog x < m * 2 + 4) mono_types in
         let ty_args = List.init (List.length tvars)
                                 (fun _ -> match (Choose.choose ty_choices) with
                                  | Either.Left fty -> prog.ty.flat_ty_to_ty fty
                                  | Either.Right tyl -> tyl) in
-        flat_ty_to_ty_with_mapping prog (List.combine tvars ty_args) fty
+        Rules.ty_label_from_ty prog (List.combine tvars ty_args) fty
     in
   let rec aux n =
     let weight_filter w f =
@@ -435,7 +413,7 @@ let poly_palka_func_steps weight (prog : Exp.program) (hole : hole_info) (acc : 
     let valid_refs = find_std_lib_funcs prog hole.ty_label (fun ty -> not (is_mono_type (Either.Left (fst (snd ty))))) in
     (* TODO: calling ty_vars twice - once here once in filter *)
     let valid_refs = List.filter_map (fun (x, ty, tys, mp) ->
-                         let vars = ty_vars ty in
+                         let vars = Util.SS.elements (Type.ty_vars ty) in
                          let vars = List.filter (fun ty_var -> List.assoc_opt ty_var mp = None) vars in
                          if vars = []
                          then Some (x, ty, tys, mp)
@@ -460,7 +438,7 @@ let poly_palka_func_steps_random weight (prog : Exp.program) (hole : hole_info) 
     let valid_refs = find_std_lib_funcs prog hole.ty_label filter in
     (* TODO: calling ty_vars twice - once here once in filter *)
     let valid_refs = List.filter_map (fun (x, ty, tys, mp) ->
-                         let vars = ty_vars ty in
+                         let vars = Util.SS.elements (Type.ty_vars ty) in
                          let vars = List.filter (fun ty_var -> List.assoc_opt ty_var mp = None) vars in
                          if vars = []
                          then None

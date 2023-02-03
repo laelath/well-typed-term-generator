@@ -216,3 +216,11 @@ let rec string_of ty_registry ty =
   | TyArrowExt (ty_params, ty_im) ->
     "(" ^ string_of_params (ty_registry.get_ty_params ty_params) ^ " -> " ^ string_of ty_registry ty_im ^ ")"
 
+
+(* FIXME: why convert to a list?? *)
+let rec ty_vars (t : flat_ty) =
+  match t with
+  | FlatTyVar x -> Util.SS.singleton x
+  | FlatTyBool | FlatTyInt -> Util.SS.empty
+  | FlatTyList t' -> ty_vars t'
+  | FlatTyArrow (ts, t') -> List.fold_left Util.SS.union (ty_vars t') (List.map ty_vars ts)

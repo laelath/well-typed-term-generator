@@ -29,16 +29,16 @@ let rec ty_label_from_ty (prog : Exp.program) mp ty =
   | Type.FlatTyVar var ->
     (match List.assoc_opt var mp with
      | None -> raise UnresolvedPolymorphism
-     | Some tyl -> (mp, tyl))
-  | Type.FlatTyInt -> (mp, prog.ty.new_ty Type.TyInt)
-  | Type.FlatTyBool -> (mp, prog.ty.new_ty Type.TyBool)
+     | Some tyl -> tyl)
+  | Type.FlatTyInt -> prog.ty.new_ty Type.TyInt
+  | Type.FlatTyBool -> prog.ty.new_ty Type.TyBool
   | Type.FlatTyList ty' ->
-    let (mp, tyl') = ty_label_from_ty prog mp ty' in
-    (mp, prog.ty.new_ty (Type.TyList tyl'))
+    let tyl' = ty_label_from_ty prog mp ty' in
+    prog.ty.new_ty (Type.TyList tyl')
   | Type.FlatTyArrow (tys, ty') ->
-    let (mp, tyl') = ty_label_from_ty prog mp ty' in
-    let (mp, tys') = List.fold_left_map (ty_label_from_ty prog) mp (List.rev tys) in
-    (mp, prog.ty.new_ty (Type.TyArrow (tys', tyl')))
+    let tyl' = ty_label_from_ty prog mp ty' in
+    let tys' = List.map (ty_label_from_ty prog mp) (List.rev tys) in
+    prog.ty.new_ty (Type.TyArrow (tys', tyl'))
 
 (* END UTILS *)
 
@@ -132,7 +132,7 @@ let palka_rule_step (prog : Exp.program) (hole : hole_info) (f, f_ty) =
 
 (* Implements the rule:
    FIXME
-   E[<>] ~> 
+   E[<>] ~>
  *)
 let let_insertion_step (prog : Exp.program) (hole : hole_info) height =
   fun () ->
@@ -155,7 +155,7 @@ let let_insertion_step (prog : Exp.program) (hole : hole_info) height =
 (* TODO: reduce redundancy *)
 (* Implements the rule:
    FIXME
-   E[<>] ~> 
+   E[<>] ~>
  *)
 let match_insertion_step (prog : Exp.program) (hole : hole_info) height =
   fun () ->
@@ -179,7 +179,7 @@ let match_insertion_step (prog : Exp.program) (hole : hole_info) height =
 
 (* Implements the rule:
    FIXME
-   E[<>] ~> 
+   E[<>] ~>
  *)
 let match_insertion_list_step (prog : Exp.program) (hole : hole_info) height =
   fun () ->
@@ -203,7 +203,7 @@ let match_insertion_list_step (prog : Exp.program) (hole : hole_info) height =
 
 (* Implements the rule:
    FIXME
-   E[<>] ~> 
+   E[<>] ~>
  *)
 let create_match_step (prog : Exp.program) (hole : hole_info) (x, ty) =
   fun () ->
@@ -231,7 +231,7 @@ let var_step (prog : Exp.program) (hole : hole_info) (var, _) =
 
 (* Implements the rule:
    FIXME
-   E[<>] ~> 
+   E[<>] ~>
  *)
 let create_if_step (prog : Exp.program) (hole : hole_info)  =
   fun () ->
@@ -246,7 +246,7 @@ let create_if_step (prog : Exp.program) (hole : hole_info)  =
 
 (* Implements the rule:
    FIXME
-   E[<>] ~> 
+   E[<>] ~>
  *)
 let std_lib_step (prog : Exp.program) (hole : hole_info) x =
   fun () ->
@@ -257,13 +257,15 @@ let std_lib_step (prog : Exp.program) (hole : hole_info) x =
 
 (* Implements the rule:
    FIXME
-   E[<>] ~> 
+   E[<>] ~>
  *)
-(* TODO: get rid of tys here? *)
-let std_lib_palka_rule_step (prog : Exp.program) (hole : hole_info) (f, _ty, tys, mp) =
+let std_lib_palka_rule_step (prog : Exp.program) (hole : hole_info) (f, ty, tys, mp) =
   fun () ->
   Debug.run (fun () -> Printf.eprintf ("creating std lib palka call: %s\n") f);
-  let (_, tyls) = List.fold_left_map (ty_label_from_ty prog) mp (List.rev tys) in
+  let all_vars = List.fold_left Util.SS.union (Type.ty_vars ty) (List.map Type.ty_vars tys) in
+  let ub_vars = Util.SS.diff all_vars (Util.SS.of_list (List.map fst mp)) in
+  let mp_total = List.map (fun x -> (x, Old.random_type hole.fuel prog)) (Util.SS.elements ub_vars) @ mp in
+  let tyls = List.map (ty_label_from_ty prog mp_total) (List.rev tys) in
   let holes = List.map (fun tyl -> prog.new_exp {exp=Exp.Hole; ty=tyl; prev=Some hole.label}) tyls in
   let func = prog.new_exp {exp=Exp.StdLibRef f; ty=prog.ty.new_ty (Type.TyArrow (tyls, hole.ty_label)); prev=Some hole.label} in
   prog.set_exp hole.label {exp=Exp.Call (func, holes); ty=hole.ty_label; prev=hole.prev};
@@ -276,8 +278,8 @@ let std_lib_palka_rule_step (prog : Exp.program) (hole : hole_info) (f, _ty, tys
 let base_constructor_step (prog : Exp.program) (hole : hole_info) exp' =
   let set exp = prog.set_exp hole.label {exp=exp; ty=hole.ty_label; prev=hole.prev} in
   match prog.ty.get_ty hole.ty_label with
-  | TyInt -> 
-     fun () -> 
+  | TyInt ->
+     fun () ->
      set exp'; []
   | _ -> raise (Util.Impossible "bad base type")
 
@@ -290,12 +292,12 @@ let data_constructor_step (prog : Exp.program) (hole : hole_info) dcon =
   match prog.ty.get_ty hole.ty_label with
   | TyBool ->
      (match dcon with
-      | "true" -> 
+      | "true" ->
          fun () ->
          Debug.run (fun () -> Printf.eprintf ("creating true\n"));
          set (Exp.ValBool true);
          []
-      | "false" -> 
+      | "false" ->
          fun () ->
          Debug.run (fun () -> Printf.eprintf ("creating false\n"));
          set (Exp.ValBool true);
@@ -308,7 +310,7 @@ let data_constructor_step (prog : Exp.program) (hole : hole_info) dcon =
          Debug.run (fun () -> Printf.eprintf ("creating nil\n"));
          set (Exp.Empty);
          []
-      | "cons" -> 
+      | "cons" ->
          fun () ->
          Debug.run (fun () -> Printf.eprintf ("creating cons\n"));
          let lhole = prog.new_exp {exp=Exp.Hole; ty=hole.ty_label; prev=Some hole.label} in
@@ -371,4 +373,4 @@ let seq_step (prog : Exp.program) (hole : hole_info) (var : Exp.var * Type.ty_la
                            ty=hole.ty_label;
                            prev=Some seq} in
   prog.set_exp hole.label {exp=Exp.Call (seq, [ref; hole']); ty=hole.ty_label; prev=hole.prev};
-  [hole]
+  [hole']
