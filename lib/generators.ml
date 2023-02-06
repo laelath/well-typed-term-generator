@@ -167,12 +167,6 @@ let random_type_palka prog n vars =
   let tyls = List.map (fun (_, ty) -> ty) vars in
   random_type_palka_helper prog n tyls
 
-(* FIXME:
-   I think we need to patch up places that instantiated std lib refs.
-   The previous bevahior was generating a random type with the function in old.ml
-   when there was unresolved polymorphism but now I've made it raise an exception.
-   This means we have to resolve all the polymorphism before going calling the Rules function *)
-
 (* std_lib objects specify an occurence amount,
    NOTE: not anymore: v
    objects are filtered so they can be selected 1/n of the time they are valid choices *)
@@ -441,8 +435,8 @@ let poly_palka_func_steps_random weight (prog : Exp.program) (hole : hole_info) 
                          if vars = []
                          then None
                          else
-                           (* FIXME: size should be *inverse* to hole depth *)
-                           let mp = (List.map (fun var -> (var, random_type_palka prog hole.depth hole.vars)) vars) @ mp in
+                           let n = max 0 (Float.to_int (Float.log (Float.of_int hole.fuel)) - hole.depth) in
+                           let mp = (List.map (fun var -> (var, random_type_palka prog n hole.vars)) vars) @ mp in
                            Some (x, ty, tys, mp))
                                      valid_refs in
     steps_generator prog hole acc
@@ -452,8 +446,8 @@ let poly_palka_func_steps_random weight (prog : Exp.program) (hole : hole_info) 
 (* fills the hole with a function application where the function is a hole and the input type is random *)
 let application_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
   (* just a singleton list *)
-  (* FIXME: size should be *inverse* to hole depth *)
-  let random_arg_types = [random_type_palka prog hole.depth hole.vars] in
+  let n = max 0 (Float.to_int (Float.log (Float.of_int hole.fuel)) - hole.depth) in
+  let random_arg_types = [random_type_palka prog n hole.vars] in
   steps_generator prog hole acc
                   Rules.application_step weight [random_arg_types]
 
