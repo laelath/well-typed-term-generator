@@ -86,13 +86,19 @@ let haskell_string (prog : Exp.program) =
   in
   str_exp prog.head
 
+(* NOTE: no enumFromTo(') or case1 *)
 let haskell_std_lib =
   let open Type in
   [("seq", (FlatTyArrow ([FlatTyVar "b"; FlatTyVar "a"], FlatTyVar "a"), 1));
    ("id", (FlatTyArrow ([FlatTyVar "a"], FlatTyVar "a"), 2));
+   ("0", (FlatTyInt, 1));
+   ("1", (FlatTyInt, 1));
+   ("2", (FlatTyInt, 1));
    ("(+)", (FlatTyArrow ([FlatTyInt; FlatTyInt], FlatTyInt), 1));
    ("(+1)", (FlatTyArrow ([FlatTyInt], FlatTyInt), 1));
    ("(-)", (FlatTyArrow ([FlatTyInt; FlatTyInt], FlatTyInt), 1));
+   ("[]", (FlatTyList (FlatTyVar "a"), 1));
+   ("(:)", (FlatTyArrow ([FlatTyVar "a"; FlatTyList (FlatTyVar "a")], FlatTyList (FlatTyVar "a")), 1));
    ("head", (FlatTyArrow ([FlatTyList (FlatTyVar "a")], FlatTyVar "a"), 3));
    ("tail", (FlatTyArrow ([FlatTyList (FlatTyVar "a")], FlatTyList (FlatTyVar "a")), 3));
    ("take", (FlatTyArrow ([FlatTyInt; FlatTyList (FlatTyVar "a")], FlatTyList (FlatTyVar "a")), 4));
@@ -113,6 +119,8 @@ let haskell_std_lib =
    ("(&&)", (FlatTyArrow ([FlatTyBool; FlatTyBool], FlatTyBool), 1));
    ("(||)", (FlatTyArrow ([FlatTyBool; FlatTyBool], FlatTyBool), 1));
    ("not", (FlatTyArrow ([FlatTyBool], FlatTyBool), 1));
+   ("True", (FlatTyBool, 1));
+   ("False", (FlatTyBool, 1));
    ("((==)::Int -> Int -> Bool)", (FlatTyArrow ([FlatTyInt; FlatTyInt], FlatTyBool), 1));
    ("((==)::Bool -> Bool -> Bool)", (FlatTyArrow ([FlatTyBool; FlatTyBool], FlatTyBool), 1));
    ("((==)::[Int] -> [Int] -> Bool)", (FlatTyArrow ([FlatTyList FlatTyInt; FlatTyList FlatTyInt], FlatTyBool), 1));
@@ -121,7 +129,7 @@ let haskell_std_lib =
 
 let generate_palka size =
   let open Type in
-  Generate.generate_fp Generators.main ~std_lib:haskell_std_lib size (FlatTyArrow ([FlatTyList FlatTyInt], (FlatTyList FlatTyInt)))
+  Generate.generate_fp Generators.palka ~std_lib:haskell_std_lib size (FlatTyArrow ([FlatTyList FlatTyInt], (FlatTyList FlatTyInt)))
 
 let generate_palka_batch batch size =
   let rec gen_batch batch acc =

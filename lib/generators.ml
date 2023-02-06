@@ -174,24 +174,22 @@ let random_type_palka prog n vars =
    This means we have to resolve all the polymorphism before going calling the Rules function *)
 
 (* std_lib objects specify an occurence amount,
+   NOTE: not anymore: v
    objects are filtered so they can be selected 1/n of the time they are valid choices *)
 let find_std_lib_refs (prog : Exp.program) tyl filter =
   List.filter_map
     (fun (x, (ty, n)) ->
-       if Random.int n <> 0
-       then None
-       else if filter (x, (ty, n))
+       if filter (x, (ty, n))
        then Option.map (fun _ -> x) (Type.ty_compat_ty_label prog.ty ty tyl [])
        else None)
     prog.std_lib
 
 (* finds all functions in the standard library that can produce tyl *)
+(* NOTE: occurence amount has been removed *)
 let find_std_lib_funcs (prog : Exp.program) tyl filter =
   List.filter_map
     (fun (x, (ty, n)) ->
-       if Random.int n <> 0
-       then None
-       else if filter (x, (ty, n))
+       if filter (x, (ty, n))
        then  match ty with
             | Type.FlatTyArrow (tys, ty') ->
               (match Type.ty_compat_ty_label prog.ty ty' tyl [] with
@@ -468,7 +466,7 @@ let palka_seq_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_u
 
 
 let not_palka_base weight (hole : hole_info) =
-  if raise Util.Unimplemented
+  if hole.fuel == 0
  (* palkaTypeSize hole.ty_label > hole.fuel + 15 *)
   then 0
   else weight hole
@@ -481,12 +479,12 @@ let palka : t =
   [
     (* TODO: base case *)
     (* bucket    ?    ...                              (                 w_const) *)
-    bucket    (c 4)    mono_var_steps                  (not_palka_base    w_const);
-    bucket    (c 2)    poly_var_steps                  (not_palka_base    w_const);
+    bucket    (c 4)    mono_var_steps                  (                  w_const);
+    bucket    (c 2)    poly_var_steps                  (                  w_const);
     bucket    (c 4)    mono_palka_func_steps           (not_palka_base    w_const);
     bucket    (c 2)    poly_palka_func_steps           (not_palka_base    w_const);
     bucket    (c 2)    poly_palka_func_steps_random    (not_palka_base    w_const);
-    bucket    (c 8)    func_constructor_steps          (not_palka_base    w_const);
+    bucket    (c 8)    func_constructor_steps          (                  w_const);
     bucket    (c 8)    application_steps               (not_palka_base    w_const);
     bucket    (c 6)    palka_seq_steps                 (not_palka_base    w_const);
   ]
