@@ -102,17 +102,20 @@ let type_size_flat_palka =
   let rec lp (t : Type.flat_ty) =
     match t with
     | FlatTyVar _ -> 1
-    | FlatTyBool | FlatTyInt | FlatTyList _ -> 1
-    | FlatTyArrow (params, res) -> List.fold_left (+) (1 + lp res) (List.map lp params) in
+    | FlatTyBool | FlatTyInt -> 1
+    | FlatTyList t' -> 2 + lp t'
+    | FlatTyArrow (params, res) -> List.fold_left (+) (3 * List.length params + lp res) (List.map lp params) in
   lp
 
 let type_size_lbl_palka (prog : Exp.program) =
   let rec lp tyl =
     match prog.ty.get_ty tyl with
-    | TyBool | TyInt | TyList _ -> 1
-    | TyArrow (params, res) -> List.fold_left (+) (1 + lp res) (List.map lp params)
+    | TyBool | TyInt -> 1
+    | TyList tyl' -> 2 + lp tyl'
+    | TyArrow (params, res) -> List.fold_left (+) (3 * List.length params + lp res) (List.map lp params)
     | TyArrowExt (params, res) ->
-      List.fold_left (+) (1 + lp res) (List.map lp (prog.ty.get_ty_params params)) in
+      let ty_params = prog.ty.get_ty_params params in
+      List.fold_left (+) (3 * List.length ty_params + lp res) (List.map lp ty_params) in
   lp
 
 let type_size_palka (prog : Exp.program) t =
