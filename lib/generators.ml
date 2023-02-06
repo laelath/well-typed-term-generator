@@ -206,18 +206,18 @@ type rule_urn = (unit -> Exp.exp_label list) Urn.t
 
 let steps_generator (prog : Exp.program) (hole : hole_info) (acc : rule_urn)
                     (rule : Exp.program -> hole_info -> 'a -> unit -> Exp.exp_label list)
-                    (weight : hole_info -> int)
+                    (weight : Exp.program -> hole_info -> int)
                     (collection : 'a list) =
   List.fold_left (fun acc a ->
-                  Urn.insert acc (weight hole) (Urn.Value (rule prog hole a)))
+                  Urn.insert acc (weight prog hole) (Urn.Value (rule prog hole a)))
              acc collection
 
-let bucket (bucket_weight : hole_info -> int) steps (weight : hole_info -> int) (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
+let bucket (bucket_weight : Exp.program -> hole_info -> int) steps (weight : Exp.program -> hole_info -> int) (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
   let nested = fun () -> steps weight prog hole acc in
-  Urn.insert acc (bucket_weight hole) (Urn.Nested nested)
+  Urn.insert acc (bucket_weight prog hole) (Urn.Nested nested)
 
 let singleton_generator weight f prog hole acc =
-  Urn.insert acc (weight hole) (Urn.Value (f prog hole))
+  Urn.insert acc (weight prog hole) (Urn.Value (f prog hole))
 
 
 
@@ -300,15 +300,15 @@ let func_constructor_steps weight (prog : Exp.program) (hole : hole_info) (acc :
 
 type t = ((Exp.program -> hole_info -> rule_urn -> rule_urn) list)
 
-let c (w : int) (_ : hole_info) = w
+let c (w : int) (_ : Exp.program) (_ : hole_info) = w
 let w_const = c 1
-let w_fuel (hole : hole_info) = hole.fuel+1
-let w_fuel_depth (hole : hole_info) = max 1 (hole.fuel - hole.depth)
+let w_fuel (_ : Exp.program) (hole : hole_info) = hole.fuel+1
+let w_fuel_depth (_ : Exp.program) (hole : hole_info) = max 1 (hole.fuel - hole.depth)
 
-let not_base weight (hole : hole_info) =
+let not_base weight (prog : Exp.program) (hole : hole_info) =
   if hole.fuel = 0
   then 0
-  else weight hole
+  else weight prog hole
 
 let s rule weight =
   singleton_generator weight rule
@@ -338,6 +338,8 @@ let main : t =
     not_useless_steps                  (                        w_fuel           );
   ]
 
+let palka_fuel_approx (hole : hole_info) =
+  Float.to_int (Float.log (Float.of_int hole.fuel)) / (hole.depth + 1)
 
 (* NOTES ABOUT THE BELOW: variables can come from the program context (lexical scope) or from the global environment *)
 
@@ -438,7 +440,7 @@ let poly_palka_func_steps_random weight (prog : Exp.program) (hole : hole_info) 
                          if vars = []
                          then None
                          else
-                           let n = Float.to_int (Float.log (Float.of_int hole.fuel)) / (hole.depth + 1) in
+                           let n = palka_fuel_approx hole in
                            let mp = (List.map (fun var -> (var, random_type_palka prog n hole.vars)) vars) @ mp in
                            Some (x, ty, tys, mp))
                                      valid_refs in
@@ -449,7 +451,7 @@ let poly_palka_func_steps_random weight (prog : Exp.program) (hole : hole_info) 
 (* fills the hole with a function application where the function is a hole and the input type is random *)
 let application_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
   (* just a singleton list *)
-  let n = Float.to_int (Float.log (Float.of_int hole.fuel)) / (hole.depth + 1) in
+  let n = palka_fuel_approx hole in
   let random_arg_types = [random_type_palka prog n hole.vars] in
   steps_generator prog hole acc
                   Rules.application_step weight [random_arg_types]
@@ -462,11 +464,11 @@ let palka_seq_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_u
                   Rules.seq_step weight hole.vars
 
 
-let not_palka_base weight (hole : hole_info) =
-  if hole.fuel == 0
+let not_palka_base weight (prog : Exp.program) (hole : hole_info) =
+  if hole.fuel == 0 || type_size_lbl_palka prog hole.ty_label > palka_fuel_approx hole + 15
  (* palkaTypeSize hole.ty_label > hole.fuel + 15 *)
   then 0
-  else weight hole
+  else weight prog hole
 
 (* TODO: fix weights on these. I think the palka termination condition is
    typeSize t > size + 15 ---> do base case only
