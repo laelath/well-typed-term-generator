@@ -435,7 +435,7 @@ let poly_palka_func_steps_random weight (prog : Exp.program) (hole : hole_info) 
                          if vars = []
                          then None
                          else
-                           let n = max 0 (Float.to_int (Float.log (Float.of_int hole.fuel)) - hole.depth) in
+                           let n = Float.to_int (Float.log (Float.of_int hole.fuel)) / hole.depth in
                            let mp = (List.map (fun var -> (var, random_type_palka prog n hole.vars)) vars) @ mp in
                            Some (x, ty, tys, mp))
                                      valid_refs in
@@ -446,7 +446,7 @@ let poly_palka_func_steps_random weight (prog : Exp.program) (hole : hole_info) 
 (* fills the hole with a function application where the function is a hole and the input type is random *)
 let application_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
   (* just a singleton list *)
-  let n = max 0 (Float.to_int (Float.log (Float.of_int hole.fuel)) - hole.depth) in
+  let n = Float.to_int (Float.log (Float.of_int hole.fuel)) / hole.depth in
   let random_arg_types = [random_type_palka prog n hole.vars] in
   steps_generator prog hole acc
                   Rules.application_step weight [random_arg_types]
