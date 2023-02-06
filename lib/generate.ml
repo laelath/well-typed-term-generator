@@ -50,8 +50,20 @@ let generate_exp (steps : Generators.t) (fuel : int) (prog : Exp.program) (e : E
     depth=Generators.exp_depth prog e;
   } in
   let steps = List.fold_left (fun acc g -> g prog hole acc) Urn.empty steps in
+  let rec sample_lp urn = 
+    match Urn.remove_opt sample urn with
+    | Some (_, base, rest) -> (
+       try
+         (match base with
+          | Urn.Value v -> v
+          | Urn.Nested urn -> sample_lp (urn()))
+       with
+         Urn.EmptyUrn -> sample_lp rest
+    )
+    | None -> raise Urn.EmptyUrn in
   (* TODO: backtracking *)
-  (Urn.sample sample steps) ()
+  (* (Urn.sample sample steps) *)
+  sample_lp steps ()
 
 let generate (steps : Generators.t) (st : state) (prog : Exp.program) : bool =
   match st.worklist.pop () with
@@ -71,4 +83,8 @@ let generate_fp (steps : Generators.t) ?(std_lib = []) (size : int) (ty : Type.f
     match generate steps st prog with
     | false -> prog
     | true -> lp() in
+  try
   lp()
+  with
+    Urn.EmptyUrn -> (PrettyPrinter.pretty_print prog; raise Urn.EmptyUrn)
+

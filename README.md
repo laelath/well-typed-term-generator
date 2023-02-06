@@ -16,7 +16,9 @@ dune build
 
 to run:
 ```
-dune exec -- gen_haskell -n 1000 -size 100 > things.hs 2> log
+mkdir log
+dune exec -- gen_haskell -type palka -n 1000 -size 100 > log/things1.hs 2> log/log1.txt
+dune exec -- gen_haskell -type not_useless -n 1000 -size 100 > log/things2.hs 2> log/log2.txt
 ```
 
 
@@ -24,7 +26,7 @@ to debug:
 ```
 dune utop
 ...
-let debug_mode := true;;
+let Debug.debug_mode := true;;
 let p = Generate.generate_fp Generators.main 100 Exp.TyInt in PrettyPrinter.pretty_print p;;
 ```
 

@@ -45,7 +45,7 @@ let haskell_string (prog : Exp.program) =
 
     let needs_annotation str =
       match str with
-      | "undefined" -> true
+      | "[]" | "undefined" -> true
       | _ -> false
     in
 
@@ -131,18 +131,22 @@ let generate_palka size =
   let open Type in
   Generate.generate_fp Generators.palka ~std_lib:haskell_std_lib size (FlatTyArrow ([FlatTyList FlatTyInt], (FlatTyList FlatTyInt)))
 
-let generate_palka_batch batch size =
+let generate_not_useless size =
+  let open Type in
+  Generate.generate_fp Generators.main ~std_lib:haskell_std_lib size (FlatTyArrow ([FlatTyList FlatTyInt], (FlatTyList FlatTyInt)))
+
+let generate_batch (generate : int -> Exp.program) batch size =
   let rec gen_batch batch acc =
     if batch == 0
     then acc
-    else let p = generate_palka size in
+    else let p = generate size in
          Printf.eprintf "\n";
          gen_batch (batch - 1) (haskell_string p :: acc)
   in
   gen_batch batch []
 
-let generate_palka_file ?(sep = "====") batch size =
-  let fs = generate_palka_batch batch size in
+let generate_file ?(sep = "====") (generate : int -> Exp.program) batch size =
+  let fs = generate_batch generate batch size in
   "module Main where\n" ^
   "import Control.Monad\n" ^
   "import qualified Control.Exception as E\n" ^
@@ -171,12 +175,16 @@ let generate_palka_file ?(sep = "====") batch size =
 let n = ref 100
 let size = ref 100
 let seed = ref (-1)
+let gen_type_palka = "palka"
+let gen_type_not_useless = "not_useless"
+let gen_type = ref gen_type_palka
 
 let speclist =
   [
     ("-n", Arg.Set_int n, "Number of functions to generate");
     ("-size", Arg.Set_int size, "Size of each function");
     ("-seed", Arg.Set_int seed, "Random generator seed");
+    ("-type", Arg.Set_string gen_type, "Generator type (\"" ^ gen_type_palka ^ "\" or \"" ^ gen_type_not_useless ^ "\")");
   ]
 
 let () =
@@ -184,4 +192,10 @@ let () =
   (if !seed < 0
    then Random.self_init ()
    else Random.init !seed);
-  print_string (generate_palka_file !n !size)
+  let gen_type = let s = !gen_type in
+                 if s = gen_type_palka
+                 then generate_palka
+                 else if s = gen_type_not_useless
+                 then generate_not_useless
+                 else raise Util.Unimplemented in
+  print_string (generate_file gen_type (!n) (!size))
