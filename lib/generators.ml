@@ -123,7 +123,7 @@ let type_size_palka (prog : Exp.program) t =
   | Either.Left fty -> type_size_flat_palka fty
   | Either.Right tyl -> type_size_lbl_palka prog tyl
 
-let is_mono_type t =
+let is_mono_type (t : (Type.flat_ty, Type.ty_label) Either.t) =
   match t with
   | Either.Right _ -> true
   | Either.Left fty -> Util.SS.is_empty (Type.ty_vars fty)
@@ -168,7 +168,9 @@ let random_type_palka_helper (prog : Exp.program) (n0 : int) (tyls : Type.ty_lab
 
 let random_type_palka prog n vars =
   let tyls = List.map (fun (_, ty) -> ty) vars in
-  random_type_palka_helper prog n tyls
+  let tyl = random_type_palka_helper prog n tyls in
+  Debug.run (fun () -> Printf.eprintf ("  random type: %s\n") (Type.string_of prog.ty tyl));
+  tyl
 
 (* std_lib objects specify an occurence amount,
    NOTE: not anymore: v
@@ -390,7 +392,7 @@ let mono_palka_func_steps weight (prog : Exp.program) (hole : hole_info) (acc : 
                     Rules.palka_rule_step weight funcs in
   (* inspects std_lib *)
   let acc =
-    let valid_refs = find_std_lib_funcs prog hole.ty_label (fun ty -> is_mono_type (Either.Right ty)) in
+    let valid_refs = find_std_lib_funcs prog hole.ty_label (fun ty -> is_mono_type (Either.Left (fst (snd ty)))) in
     (* TODO: incorporate occurence amount here *)
     steps_generator prog hole acc
                     Rules.std_lib_palka_rule_step weight valid_refs in
@@ -435,7 +437,7 @@ let poly_palka_func_steps_random weight (prog : Exp.program) (hole : hole_info) 
     let valid_refs = find_std_lib_funcs prog hole.ty_label filter in
     (* TODO: calling ty_vars twice - once here once in filter *)
     let valid_refs = List.filter_map (fun (x, ty, tys, mp) ->
-                         let vars = Util.SS.elements (Type.ty_vars ty) in
+                         let vars = Util.SS.elements (Type.ty_vars (Type.FlatTyArrow (tys, ty))) in
                          let vars = List.filter (fun ty_var -> List.assoc_opt ty_var mp = None) vars in
                          if vars = []
                          then None

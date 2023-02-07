@@ -259,13 +259,10 @@ let std_lib_step (prog : Exp.program) (hole : hole_info) x =
    FIXME
    E[<>] ~>
  *)
-let std_lib_palka_rule_step (prog : Exp.program) (hole : hole_info) (f, ty, tys, mp) =
+let std_lib_palka_rule_step (prog : Exp.program) (hole : hole_info) (f, _ty, tys, mp) =
   fun () ->
   Debug.run (fun () -> Printf.eprintf ("creating std lib palka call: %s\n") f);
-  let all_vars = List.fold_left Util.SS.union (Type.ty_vars ty) (List.map Type.ty_vars tys) in
-  let ub_vars = Util.SS.diff all_vars (Util.SS.of_list (List.map fst mp)) in
-  let mp_total = List.map (fun x -> (x, Old.random_type hole.fuel prog)) (Util.SS.elements ub_vars) @ mp in
-  let tyls = List.map (ty_label_from_ty prog mp_total) (List.rev tys) in
+  let tyls = List.map (ty_label_from_ty prog mp) (List.rev tys) in
   let holes = List.map (fun tyl -> prog.new_exp {exp=Exp.Hole; ty=tyl; prev=Some hole.label}) tyls in
   let func = prog.new_exp {exp=Exp.StdLibRef f; ty=prog.ty.new_ty (Type.TyArrow (tyls, hole.ty_label)); prev=Some hole.label} in
   prog.set_exp hole.label {exp=Exp.Call (func, holes); ty=hole.ty_label; prev=hole.prev};
@@ -362,15 +359,15 @@ let application_step (prog : Exp.program) (hole : hole_info) tys =
 
 let seq_step (prog : Exp.program) (hole : hole_info) (var : Exp.var * Type.ty_label) =
   fun () ->
-  Debug.run (fun () -> Printf.eprintf ("creating seq\n"));
+  Debug.run (fun () -> Printf.eprintf ("creating palka seq\n"));
   let seq = prog.new_exp {exp=Exp.StdLibRef "seq";
-                          ty=prog.ty.new_ty (TyArrow ([snd var; hole.ty_label], hole.ty_label));
+                          ty=prog.ty.new_ty (TyArrow ([hole.ty_label; snd var], hole.ty_label));
                           prev=Some hole.label} in
   let ref = prog.new_exp {exp=Exp.Var (fst var);
                           ty=snd var;
-                          prev=Some seq} in
+                          prev=Some hole.label} in
   let hole' = prog.new_exp {exp=Exp.Hole;
                            ty=hole.ty_label;
-                           prev=Some seq} in
-  prog.set_exp hole.label {exp=Exp.Call (seq, [ref; hole']); ty=hole.ty_label; prev=hole.prev};
+                           prev=Some hole.label} in
+  prog.set_exp hole.label {exp=Exp.Call (seq, [hole'; ref]); ty=hole.ty_label; prev=hole.prev};
   [hole']
