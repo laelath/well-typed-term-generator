@@ -341,7 +341,7 @@ let main : t =
   ]
 
 let palka_fuel_approx (hole : hole_info) =
-  Float.to_int (Float.log (Float.of_int hole.fuel)) / (hole.depth + 1)
+  hole.fuel / (hole.depth + 1)
 
 (* NOTES ABOUT THE BELOW: variables can come from the program context (lexical scope) or from the global environment *)
 
@@ -467,7 +467,7 @@ let palka_seq_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_u
 
 
 let not_palka_base weight (prog : Exp.program) (hole : hole_info) =
-  if hole.fuel == 0 || type_size_lbl_palka prog hole.ty_label > palka_fuel_approx hole + 15
+  if hole.fuel == 0 (* || type_size_lbl_palka prog hole.ty_label > palka_fuel_approx hole + 15 *)
  (* palkaTypeSize hole.ty_label > hole.fuel + 15 *)
   then 0
   else weight prog hole
