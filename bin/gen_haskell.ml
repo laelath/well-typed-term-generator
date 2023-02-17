@@ -45,7 +45,7 @@ let haskell_string (prog : Exp.program) =
 
     let needs_annotation str =
       match str with
-      | "[]" | "undefined" | "length" | "foldr" -> true
+      | "[]" | "undefined" -> true
       | _ -> false
     in
 

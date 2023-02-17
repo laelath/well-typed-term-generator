@@ -204,10 +204,10 @@ type rule_urn = (unit -> Exp.exp_label list) Urn.t
 
 let steps_generator (prog : Exp.program) (hole : hole_info) (acc : rule_urn)
                     (rule : Exp.program -> hole_info -> 'a -> unit -> Exp.exp_label list)
-                    (weight : Exp.program -> hole_info -> int)
+                    (weight : hole_info -> int)
                     (collection : 'a list) =
   List.fold_left (fun acc a ->
-                  Urn.insert acc (weight prog hole) (Urn.Value (rule prog hole a)))
+                  Urn.insert acc (weight hole) (Urn.Value (rule prog hole a)))
              acc collection
 
 let bucket (bucket_weight : Exp.program -> hole_info -> int) steps (weight : Exp.program -> hole_info -> int) (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
@@ -215,7 +215,7 @@ let bucket (bucket_weight : Exp.program -> hole_info -> int) steps (weight : Exp
   Urn.insert acc (bucket_weight prog hole) (Urn.Nested nested)
 
 let singleton_generator weight f prog hole acc =
-  Urn.insert acc (weight prog hole) (Urn.Value (f prog hole))
+  Urn.insert acc (weight hole) (Urn.Value (f prog hole))
 
 
 
@@ -317,17 +317,17 @@ let palka_seq_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_u
 
 type t = ((Exp.program -> hole_info -> rule_urn -> rule_urn) list)
 
-let c (w : int) (_ : Exp.program) (_ : hole_info) = w
+let c (w : int) (_ : hole_info) = w
 let w_const n = c n
-let w_fuel_base n m (_ : Exp.program) (hole : hole_info) = hole.fuel * n + m
-let w_fuel_depth (_ : Exp.program) (hole : hole_info) = max 0 (hole.fuel - hole.depth)
+let w_fuel_base n m (hole : hole_info) = hole.fuel * n + m
+let w_fuel_depth (hole : hole_info) = max 0 (hole.fuel - hole.depth)
 
 let w_fuel n = w_fuel_base n 0
 
-let not_base weight (prog : Exp.program) (hole : hole_info) =
+let not_base weight (hole : hole_info) =
   if hole.fuel = 0
   then 0
-  else weight prog hole
+  else weight hole
 
 let s rule weight =
   singleton_generator weight rule
