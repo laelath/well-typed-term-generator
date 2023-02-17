@@ -21,6 +21,12 @@ let rec type_complexity (prog : Exp.program) (ty : Type.ty_label) =
 let rec random_type size (prog : Exp.program) =
   prog.ty.new_ty
     ((Choose.choose_frequency
-        [(1, (fun _ -> Type.TyBool)); (1, (fun _ -> Type.TyInt));
-         (size, (fun _ -> Type.TyList (random_type (size - 1) prog)))])
+        [(8, (fun _ -> Type.TyBool));
+         (12, (fun _ -> Type.TyInt));
+         (size / 4, (fun _ -> Type.TyList (random_type (size / 2) prog)));
+         (size / 4, (fun _ ->
+                       let n = (Random.int 3) + 1 in
+                       let params = prog.ty.new_ty_params (prog.new_extvar ()) in
+                       for _ = 1 to n do prog.ty.add_ty_param params (random_type (size / (2 * n)) prog) done;
+                       Type.TyArrowExt (params, (random_type (size / 2) prog))))])
      ())

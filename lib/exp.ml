@@ -303,7 +303,7 @@ let type_check (prog : program) =
 
   let ensure_ty_compat ty tyl =
     match Type.ty_compat_ty_label prog.ty ty tyl [] with
-    | None -> print_string (Type.string_of prog.ty tyl); 
+    | None -> print_string (Type.string_of prog.ty tyl);
               print_newline ();
               raise (TypeCheckError "Invalid stdlib reference")
     | Some _ -> () in

@@ -259,10 +259,13 @@ let std_lib_step (prog : Exp.program) (hole : hole_info) x =
    FIXME
    E[<>] ~>
  *)
-let std_lib_palka_rule_step (prog : Exp.program) (hole : hole_info) (f, _ty, tys, mp) =
+let std_lib_palka_rule_step (prog : Exp.program) (hole : hole_info) (f, ty, tys, mp) =
   fun () ->
   Debug.run (fun () -> Printf.eprintf ("creating std lib palka call: %s\n") f);
-  let tyls = List.map (ty_label_from_ty prog mp) (List.rev tys) in
+  let vars = List.fold_left Util.SS.union (Type.ty_vars ty) (List.map Type.ty_vars tys) in
+  let unmapped_vars = Util.SS.diff vars (Util.SS.of_list (List.map fst mp)) in
+  let mp' = List.map (fun x -> (x, Old.random_type hole.fuel prog)) (Util.SS.elements unmapped_vars) in
+  let tyls = List.map (ty_label_from_ty prog (mp' @ mp)) (List.rev tys) in
   let holes = List.map (fun tyl -> prog.new_exp {exp=Exp.Hole; ty=tyl; prev=Some hole.label}) tyls in
   let func = prog.new_exp {exp=Exp.StdLibRef f; ty=prog.ty.new_ty (Type.TyArrow (tyls, hole.ty_label)); prev=Some hole.label} in
   prog.set_exp hole.label {exp=Exp.Call (func, holes); ty=hole.ty_label; prev=hole.prev};
@@ -273,12 +276,15 @@ let std_lib_palka_rule_step (prog : Exp.program) (hole : hole_info) (f, _ty, tys
    E[<>] ~> E[value]
  *)
 let base_constructor_step (prog : Exp.program) (hole : hole_info) exp' =
-  let set exp = prog.set_exp hole.label {exp=exp; ty=hole.ty_label; prev=hole.prev} in
-  match prog.ty.get_ty hole.ty_label with
+  fun () ->
+  Debug.run (fun () -> Printf.eprintf ("Creating base constructor\n"));
+  prog.set_exp hole.label {exp=exp'; ty=hole.ty_label; prev=hole.prev};
+  []
+  (*match prog.ty.get_ty hole.ty_label with
   | TyInt ->
      fun () ->
      set exp'; []
-  | _ -> raise (Util.Impossible "bad base type")
+  | _ -> raise (Util.Impossible "bad base type")*)
 
 
 (* Implements the rule:
@@ -287,7 +293,7 @@ let base_constructor_step (prog : Exp.program) (hole : hole_info) exp' =
 let data_constructor_step (prog : Exp.program) (hole : hole_info) dcon =
   let set exp = prog.set_exp hole.label {exp=exp; ty=hole.ty_label; prev=hole.prev} in
   match prog.ty.get_ty hole.ty_label with
-  | TyBool ->
+  (*| TyBool ->
      (match dcon with
       | "true" ->
          fun () ->
@@ -299,7 +305,7 @@ let data_constructor_step (prog : Exp.program) (hole : hole_info) dcon =
          Debug.run (fun () -> Printf.eprintf ("creating false\n"));
          set (Exp.ValBool true);
          []
-     | _ -> raise (Util.Impossible "bad data constructor"))
+     | _ -> raise (Util.Impossible "bad data constructor"))*)
   | TyList ty' ->
      (match dcon with
       | "nil" ->

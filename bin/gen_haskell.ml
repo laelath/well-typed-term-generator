@@ -127,9 +127,12 @@ let haskell_std_lib =
    ("undefined", (FlatTyVar "a", 32));
   ]
 
-let generate_palka size =
+let generate_palka _size =
+  raise Util.Unimplemented
+(*
   let open Type in
   Generate.generate_fp Generators.palka ~std_lib:haskell_std_lib size (FlatTyArrow ([FlatTyList FlatTyInt], (FlatTyList FlatTyInt)))
+*)
 
 let generate_not_useless size =
   let open Type in
@@ -173,11 +176,11 @@ let generate_file ?(sep = "====") (generate : int -> Exp.program) batch size =
 
 
 let n = ref 100
-let size = ref 100
+let size = ref 25
 let seed = ref (-1)
 let gen_type_palka = "palka"
 let gen_type_not_useless = "not_useless"
-let gen_type = ref gen_type_palka
+let gen_type = ref gen_type_not_useless
 
 let speclist =
   [

@@ -262,24 +262,24 @@ let var_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
 
 
 let std_lib_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
-  let valid_refs = find_std_lib_refs prog hole.ty_label (fun _ -> false) in
   (* TODO: incorporate occurence amount here *)
+  let valid_refs = find_std_lib_refs prog hole.ty_label (fun _ -> true) in
   steps_generator prog hole acc
                   Rules.std_lib_step weight valid_refs
 
 
 let std_lib_palka_rule_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
-  let valid_refs = find_std_lib_funcs prog hole.ty_label (fun _ -> true) in
   (* TODO: incorporate occurence amount here *)
+  let valid_refs = find_std_lib_funcs prog hole.ty_label (fun _ -> true) in
   steps_generator prog hole acc
                   Rules.std_lib_palka_rule_step weight valid_refs
 
 
 let base_constructor_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
   (* TODO: sample base type (in this case, just Int) *)
-  match  prog.ty.get_ty hole.ty_label with
+  match prog.ty.get_ty hole.ty_label with
   | TyInt ->
-     let vals = [Exp.ValInt 0; Exp.ValInt 1; Exp.ValInt 33] in
+     let vals = [Exp.ValInt 0; Exp.ValInt 1; Exp.ValInt 2; Exp.ValInt (-1); Exp.ValInt 42] in
      steps_generator prog hole acc
                      Rules.base_constructor_step weight vals
   | _ -> acc
@@ -300,12 +300,35 @@ let func_constructor_steps weight (prog : Exp.program) (hole : hole_info) (acc :
      singleton_generator weight Rules.func_constructor_step prog hole acc
   | _ -> acc
 
+
+let lambda_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
+  match prog.ty.get_ty hole.ty_label with
+  | TyArrow _ ->
+    singleton_generator weight Rules.func_constructor_step prog hole acc
+  | _ -> acc
+
+let ext_lambda_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
+  match prog.ty.get_ty hole.ty_label with
+  | TyArrowExt _ ->
+    singleton_generator weight Rules.func_constructor_step prog hole acc
+  | _ -> acc
+
+(* fills the hole with a seq where the lhs is a variable *)
+let palka_seq_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
+  (* technically palka can put std lib functions in the seq position... *)
+  (* ... but we'll just ignore that *)
+  steps_generator prog hole acc
+                  Rules.seq_step weight hole.vars
+
+
 type t = ((Exp.program -> hole_info -> rule_urn -> rule_urn) list)
 
 let c (w : int) (_ : Exp.program) (_ : hole_info) = w
-let w_const = c 1
-let w_fuel (_ : Exp.program) (hole : hole_info) = hole.fuel+1
-let w_fuel_depth (_ : Exp.program) (hole : hole_info) = max 1 (hole.fuel - hole.depth)
+let w_const n = c n
+let w_fuel_base n m (_ : Exp.program) (hole : hole_info) = hole.fuel * n + m
+let w_fuel_depth (_ : Exp.program) (hole : hole_info) = max 0 (hole.fuel - hole.depth)
+
+let w_fuel n = w_fuel_base n 0
 
 let not_base weight (prog : Exp.program) (hole : hole_info) =
   if hole.fuel = 0
@@ -315,6 +338,21 @@ let not_base weight (prog : Exp.program) (hole : hole_info) =
 let s rule weight =
   singleton_generator weight rule
 
+let main : t =
+  [
+    var_steps                       ( w_const 1       );
+    std_lib_steps                   ( w_const 1       );
+    lambda_steps                    ( w_fuel_base 1 1 );
+    ext_lambda_steps                ( w_fuel_base 1 1 );
+    not_useless_steps               ( w_fuel_base 1 1 );
+    let_insertion_steps             ( w_fuel_depth    );
+    palka_rule_steps                ( w_fuel 1        );
+    std_lib_palka_rule_steps        ( w_fuel 1        );
+    s Rules.ext_function_call_step  ( w_fuel 1        );
+    palka_seq_steps                 ( w_fuel 1        );
+  ]
+
+(*
 let main : t =
   [
     (* RULE TYPE *)                     (* IS BASE CASE? *)   (* WEIGHT *)
@@ -339,6 +377,7 @@ let main : t =
     (* --------------------------------------------------------------------------*)
     not_useless_steps                  (                        w_fuel           );
   ]
+*)
 
 let palka_fuel_approx (hole : hole_info) =
   hole.fuel / (hole.depth + 1)
@@ -458,13 +497,6 @@ let application_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule
   steps_generator prog hole acc
                   Rules.application_step weight [random_arg_types]
 
-(* fills the hole with a seq where the lhs is a variable *)
-let palka_seq_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
-  (* technically palka can put std lib functions in the seq position... *)
-  (* ... but we'll just ignore that *)
-  steps_generator prog hole acc
-                  Rules.seq_step weight hole.vars
-
 
 let not_palka_base weight (prog : Exp.program) (hole : hole_info) =
   if hole.fuel == 0 (* || type_size_lbl_palka prog hole.ty_label > palka_fuel_approx hole + 15 *)
@@ -472,10 +504,7 @@ let not_palka_base weight (prog : Exp.program) (hole : hole_info) =
   then 0
   else weight prog hole
 
-(* TODO: fix weights on these. I think the palka termination condition is
-   typeSize t > size + 15 ---> do base case only
-*)
-
+(*
 let palka : t =
   [
     (* TODO: base case *)
@@ -489,5 +518,5 @@ let palka : t =
     bucket    (c 8)    application_steps               (not_palka_base    w_const);
     bucket    (c 6)    palka_seq_steps                 (not_palka_base    w_const);
   ]
-
+*)
 
