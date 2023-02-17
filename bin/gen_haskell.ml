@@ -142,7 +142,7 @@ let generate_batch (generate : int -> Exp.program) batch size =
     if batch == 0
     then acc
     else let p = generate size in
-         Printf.eprintf "\n";
+         Debug.run (fun () -> Printf.eprintf ("\n"));
          gen_batch (batch - 1) (haskell_string p :: acc)
   in
   gen_batch batch []

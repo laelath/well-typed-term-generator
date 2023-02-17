@@ -204,10 +204,10 @@ type rule_urn = (unit -> Exp.exp_label list) Urn.t
 
 let steps_generator (prog : Exp.program) (hole : hole_info) (acc : rule_urn)
                     (rule : Exp.program -> hole_info -> 'a -> unit -> Exp.exp_label list)
-                    (weight : hole_info -> int)
+                    (weight : hole_info -> 'a -> int)
                     (collection : 'a list) =
   List.fold_left (fun acc a ->
-                  Urn.insert acc (weight hole) (Urn.Value (rule prog hole a)))
+                  Urn.insert acc (weight hole a) (Urn.Value (rule prog hole a)))
              acc collection
 
 let bucket (bucket_weight : Exp.program -> hole_info -> int) steps (weight : Exp.program -> hole_info -> int) (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
@@ -215,7 +215,7 @@ let bucket (bucket_weight : Exp.program -> hole_info -> int) steps (weight : Exp
   Urn.insert acc (bucket_weight prog hole) (Urn.Nested nested)
 
 let singleton_generator weight f prog hole acc =
-  Urn.insert acc (weight hole) (Urn.Value (f prog hole))
+  Urn.insert acc (weight hole ()) (Urn.Value (f prog hole))
 
 
 
@@ -259,8 +259,14 @@ let var_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
 
 let std_lib_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
   let valid_refs = find_std_lib_refs prog hole.ty_label (fun _ -> true) in
+  (* TODO: FIXME: GROSS: HACK: *)
+  let weight' hi x =
+    match x with
+    | "undefined" -> weight hi x / 2
+    | _ -> weight hi x
+    in
   steps_generator prog hole acc
-                  Rules.std_lib_step weight valid_refs
+                  Rules.std_lib_step weight' valid_refs
 
 
 let std_lib_palka_rule_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
@@ -317,10 +323,10 @@ let palka_seq_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_u
 
 type t = ((Exp.program -> hole_info -> rule_urn -> rule_urn) list)
 
-let c (w : int) (_ : hole_info) = w
+let c (w : int) (_ : hole_info) _ = w
 let w_const n = c n
-let w_fuel_base n m (hole : hole_info) = hole.fuel * n + m
-let w_fuel_depth (hole : hole_info) = max 0 (hole.fuel - hole.depth)
+let w_fuel_base n m (hole : hole_info) _ = hole.fuel * n + m
+let w_fuel_depth (hole : hole_info) _ = max 0 (hole.fuel - hole.depth)
 
 let w_fuel n = w_fuel_base n 0
 
@@ -334,14 +340,14 @@ let s rule weight =
 
 let main : t =
   [
-    var_steps                       ( w_const 1       );
+    var_steps                       ( w_const 2       );
     std_lib_steps                   ( w_const 1       );
-    lambda_steps                    ( w_fuel_base 1 1 );
-    ext_lambda_steps                ( w_fuel_base 1 1 );
-    not_useless_steps               ( w_fuel_base 1 1 );
+    lambda_steps                    ( w_fuel_base 2 1 );
+    ext_lambda_steps                ( w_fuel_base 4 1 );
+    not_useless_steps               ( w_fuel_base 2 1 );
     let_insertion_steps             ( w_fuel_depth    );
-    palka_rule_steps                ( w_fuel 1        );
-    std_lib_palka_rule_steps        ( w_fuel 1        );
+    palka_rule_steps                ( w_fuel 2        );
+    std_lib_palka_rule_steps        ( w_fuel 2        );
     s Rules.ext_function_call_step  ( w_fuel 1        );
     palka_seq_steps                 ( w_fuel 1        );
   ]
@@ -382,37 +388,43 @@ let palka_fuel_approx (hole : hole_info) =
 
 (* fills the hole with a monomorphic variable of the same type *)
 let mono_var_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
+  (* polymorphism fun times *)
+  let weight' hi _ = weight hi () in
   (* inspects variables *)
   let acc =
     let filter b = Type.is_same_ty prog.ty (snd b) hole.ty_label && is_mono_type (Either.Right (snd b)) in
     let ref_vars = List.filter filter hole.vars in
     steps_generator prog hole acc
-                    Rules.var_step weight ref_vars in
+                    Rules.var_step weight' ref_vars in
   (* inspects std_lib *)
   let acc =
     let valid_refs = find_std_lib_refs prog hole.ty_label (fun (_, ty) -> is_mono_type (Either.Left ty)) in
     steps_generator prog hole acc
-                    Rules.std_lib_step weight valid_refs in
+                    Rules.std_lib_step weight' valid_refs in
   acc
 
   (* fills the hole with a polymorphic variable that completely matches the type (no free type variables after unification *)
 let poly_var_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
+  (* polymorphism fun times *)
+  let weight' hi _ = weight hi () in
   (* inspects variables *)
   let acc =
     let filter b = Type.is_same_ty prog.ty (snd b) hole.ty_label &&
                      (not (is_mono_type (Either.Right (snd b)))) in
     let ref_vars = List.filter filter hole.vars in
     steps_generator prog hole acc
-                    Rules.var_step weight ref_vars in
+                    Rules.var_step weight' ref_vars in
   (* inspects std_lib *)
   let acc =
     let valid_refs = find_std_lib_refs prog hole.ty_label (fun (_, ty) -> not (is_mono_type (Either.Left ty))) in
     steps_generator prog hole acc
-                    Rules.std_lib_step weight valid_refs in
+                    Rules.std_lib_step weight' valid_refs in
   acc
 
 (* fills the hole with a function application where the function is a monomorphic variable *)
 let mono_palka_func_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
+  (* polymorphism fun times *)
+  let weight' hi _ = weight hi () in
   (* inspects variables *)
   let acc =
     let filter b =
@@ -420,23 +432,25 @@ let mono_palka_func_steps weight (prog : Exp.program) (hole : hole_info) (acc : 
         is_mono_type (Either.Right (snd b)) in
     let funcs = List.filter filter hole.vars in
     steps_generator prog hole acc
-                    Rules.palka_rule_step weight funcs in
+                    Rules.palka_rule_step weight' funcs in
   (* inspects std_lib *)
   let acc =
     let valid_refs = find_std_lib_funcs prog hole.ty_label (fun ty -> is_mono_type (Either.Left (snd ty))) in
     steps_generator prog hole acc
-                    Rules.std_lib_palka_rule_step weight valid_refs in
+                    Rules.std_lib_palka_rule_step weight' valid_refs in
   acc
 
 (* fills the hole with a function application where the function is a polymorphic variable that completely matches *)
 let poly_palka_func_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
+  (* polymorphism fun times *)
+  let weight' hi _ = weight hi () in
   (* inspects variables *)
   let acc =
     let filter b = Type.is_func_producing prog.ty hole.ty_label (snd b) &&
                      (not (is_mono_type (Either.Right (snd b)))) in
     let funcs = List.filter filter hole.vars in
     steps_generator prog hole acc
-                    Rules.palka_rule_step weight funcs in
+                    Rules.palka_rule_step weight' funcs in
   (* inspects std_lib *)
   let acc =
     let valid_refs = find_std_lib_funcs prog hole.ty_label (fun ty -> not (is_mono_type (Either.Left (snd ty)))) in
@@ -449,18 +463,20 @@ let poly_palka_func_steps weight (prog : Exp.program) (hole : hole_info) (acc : 
                          else None)
                                      valid_refs in
     steps_generator prog hole acc
-                    Rules.std_lib_palka_rule_step weight valid_refs in
+                    Rules.std_lib_palka_rule_step weight' valid_refs in
   acc
 
 (* fills the hole with a function application where the function is a polymorphic variable that doesn't completely match. A random type is chosen for all free type variables *)
 let poly_palka_func_steps_random weight (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
+  (* polymorphism fun times *)
+  let weight' hi _ = weight hi () in
   (* inspects variables *)
   let acc =
     let filter b = Type.is_func_producing prog.ty hole.ty_label (snd b) &&
                      (not (is_mono_type (Either.Right (snd b)))) in
     let funcs = List.filter filter hole.vars in
     steps_generator prog hole acc
-                    Rules.palka_rule_step weight funcs in
+                    Rules.palka_rule_step weight' funcs in
   (* inspects std_lib *)
   let acc =
     let filter (_, ty) = not (is_mono_type (Either.Left ty)) in
@@ -477,7 +493,7 @@ let poly_palka_func_steps_random weight (prog : Exp.program) (hole : hole_info) 
                            Some (x, ty, tys, mp))
                                      valid_refs in
     steps_generator prog hole acc
-                    Rules.std_lib_palka_rule_step weight valid_refs in
+                    Rules.std_lib_palka_rule_step weight' valid_refs in
   acc
 
 (* fills the hole with a function application where the function is a hole and the input type is random *)
