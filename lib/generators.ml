@@ -132,7 +132,7 @@ let is_mono_type (t : (Type.flat_ty, Type.ty_label) Either.t) =
 (* Uses all the types in the standard library by default,
    the type labels from the context will need to be harvested by the generator that uses this. *)
 let random_type_palka_helper (prog : Exp.program) (n0 : int) (tyls : Type.ty_label list) =
-  let l = List.map Either.left (List.map (fun x -> fst (snd x)) prog.std_lib)
+  let l = List.map Either.left (List.map snd prog.std_lib)
         @ List.map Either.right tyls in
   (* In the palka code this function is filling all the polymorphic type variables
      in the type with monomorphic ones *)
@@ -172,23 +172,19 @@ let random_type_palka prog n vars =
   Debug.run (fun () -> Printf.eprintf ("  random type: %s\n") (Type.string_of prog.ty tyl));
   tyl
 
-(* std_lib objects specify an occurence amount,
-   NOTE: not anymore: v
-   objects are filtered so they can be selected 1/n of the time they are valid choices *)
 let find_std_lib_refs (prog : Exp.program) tyl filter =
   List.filter_map
-    (fun (x, (ty, n)) ->
-       if filter (x, (ty, n))
+    (fun (x, ty) ->
+       if filter (x, ty)
        then Option.map (fun _ -> x) (Type.ty_compat_ty_label prog.ty ty tyl [])
        else None)
     prog.std_lib
 
 (* finds all functions in the standard library that can produce tyl *)
-(* NOTE: occurence amount has been removed *)
 let find_std_lib_funcs (prog : Exp.program) tyl filter =
   List.filter_map
-    (fun (x, (ty, n)) ->
-       if filter (x, (ty, n))
+    (fun (x, ty) ->
+       if filter (x, ty)
        then  match ty with
             | Type.FlatTyArrow (tys, ty') ->
               (match Type.ty_compat_ty_label prog.ty ty' tyl [] with
@@ -262,14 +258,12 @@ let var_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
 
 
 let std_lib_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
-  (* TODO: incorporate occurence amount here *)
   let valid_refs = find_std_lib_refs prog hole.ty_label (fun _ -> true) in
   steps_generator prog hole acc
                   Rules.std_lib_step weight valid_refs
 
 
 let std_lib_palka_rule_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
-  (* TODO: incorporate occurence amount here *)
   let valid_refs = find_std_lib_funcs prog hole.ty_label (fun _ -> true) in
   steps_generator prog hole acc
                   Rules.std_lib_palka_rule_step weight valid_refs
@@ -396,8 +390,7 @@ let mono_var_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_ur
                     Rules.var_step weight ref_vars in
   (* inspects std_lib *)
   let acc =
-    let valid_refs = find_std_lib_refs prog hole.ty_label (fun (_, (ty, _)) -> is_mono_type (Either.Left ty)) in
-    (* TODO: incorporate occurence amount here *)
+    let valid_refs = find_std_lib_refs prog hole.ty_label (fun (_, ty) -> is_mono_type (Either.Left ty)) in
     steps_generator prog hole acc
                     Rules.std_lib_step weight valid_refs in
   acc
@@ -413,8 +406,7 @@ let poly_var_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_ur
                     Rules.var_step weight ref_vars in
   (* inspects std_lib *)
   let acc =
-    let valid_refs = find_std_lib_refs prog hole.ty_label (fun (_, (ty, _)) -> not (is_mono_type (Either.Left ty))) in
-    (* TODO: incorporate occurence amount here *)
+    let valid_refs = find_std_lib_refs prog hole.ty_label (fun (_, ty) -> not (is_mono_type (Either.Left ty))) in
     steps_generator prog hole acc
                     Rules.std_lib_step weight valid_refs in
   acc
@@ -431,8 +423,7 @@ let mono_palka_func_steps weight (prog : Exp.program) (hole : hole_info) (acc : 
                     Rules.palka_rule_step weight funcs in
   (* inspects std_lib *)
   let acc =
-    let valid_refs = find_std_lib_funcs prog hole.ty_label (fun ty -> is_mono_type (Either.Left (fst (snd ty)))) in
-    (* TODO: incorporate occurence amount here *)
+    let valid_refs = find_std_lib_funcs prog hole.ty_label (fun ty -> is_mono_type (Either.Left (snd ty))) in
     steps_generator prog hole acc
                     Rules.std_lib_palka_rule_step weight valid_refs in
   acc
@@ -448,7 +439,7 @@ let poly_palka_func_steps weight (prog : Exp.program) (hole : hole_info) (acc : 
                     Rules.palka_rule_step weight funcs in
   (* inspects std_lib *)
   let acc =
-    let valid_refs = find_std_lib_funcs prog hole.ty_label (fun ty -> not (is_mono_type (Either.Left (fst (snd ty))))) in
+    let valid_refs = find_std_lib_funcs prog hole.ty_label (fun ty -> not (is_mono_type (Either.Left (snd ty)))) in
     (* TODO: calling ty_vars twice - once here once in filter *)
     let valid_refs = List.filter_map (fun (x, ty, tys, mp) ->
                          let vars = Util.SS.elements (Type.ty_vars ty) in
@@ -472,7 +463,7 @@ let poly_palka_func_steps_random weight (prog : Exp.program) (hole : hole_info) 
                     Rules.palka_rule_step weight funcs in
   (* inspects std_lib *)
   let acc =
-    let filter (_, (ty, _)) = not (is_mono_type (Either.Left ty)) in
+    let filter (_, ty) = not (is_mono_type (Either.Left ty)) in
     let valid_refs = find_std_lib_funcs prog hole.ty_label filter in
     (* TODO: calling ty_vars twice - once here once in filter *)
     let valid_refs = List.filter_map (fun (x, ty, tys, mp) ->

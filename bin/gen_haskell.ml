@@ -89,42 +89,41 @@ let haskell_string (prog : Exp.program) =
 (* NOTE: no enumFromTo(') or case1 *)
 let haskell_std_lib =
   let open Type in
-  [("seq", (FlatTyArrow ([FlatTyVar "b"; FlatTyVar "a"], FlatTyVar "a"), 1));
-   ("id", (FlatTyArrow ([FlatTyVar "a"], FlatTyVar "a"), 2));
-   ("0", (FlatTyInt, 1));
-   ("1", (FlatTyInt, 1));
-   ("2", (FlatTyInt, 1));
-   ("(+)", (FlatTyArrow ([FlatTyInt; FlatTyInt], FlatTyInt), 1));
-   ("(+1)", (FlatTyArrow ([FlatTyInt], FlatTyInt), 1));
-   ("(-)", (FlatTyArrow ([FlatTyInt; FlatTyInt], FlatTyInt), 1));
-   ("[]", (FlatTyList (FlatTyVar "a"), 1));
-   ("(:)", (FlatTyArrow ([FlatTyVar "a"; FlatTyList (FlatTyVar "a")], FlatTyList (FlatTyVar "a")), 1));
-   ("head", (FlatTyArrow ([FlatTyList (FlatTyVar "a")], FlatTyVar "a"), 3));
-   ("tail", (FlatTyArrow ([FlatTyList (FlatTyVar "a")], FlatTyList (FlatTyVar "a")), 3));
-   ("take", (FlatTyArrow ([FlatTyInt; FlatTyList (FlatTyVar "a")], FlatTyList (FlatTyVar "a")), 4));
-   ("(!!)", (FlatTyArrow ([FlatTyList (FlatTyVar "a"); FlatTyInt], FlatTyVar "a"), 4));
-   ("length", (FlatTyArrow ([FlatTyList (FlatTyVar "a")], FlatTyInt), 1));
-   ("(++)", (FlatTyArrow ([FlatTyList (FlatTyVar "a"); FlatTyList (FlatTyVar "a")],
-                      FlatTyList (FlatTyVar "a")), 1));
-   ("filter", (FlatTyArrow ([FlatTyArrow ([FlatTyVar "a"], FlatTyBool); FlatTyList (FlatTyVar "a")],
-                        FlatTyList (FlatTyVar "a")), 1));
-   ("map", (FlatTyArrow ([FlatTyArrow ([FlatTyVar "a"], FlatTyVar "b"); FlatTyList (FlatTyVar "a")],
-                     FlatTyList (FlatTyVar "b")), 1));
-   ("foldr", (FlatTyArrow ([FlatTyArrow ([FlatTyVar "b"; FlatTyVar "a"],
-                                 FlatTyVar "a");
-                        FlatTyVar "a"; FlatTyList (FlatTyVar "b")],
-                       FlatTyVar "a"), 1));
-   ("odd", (FlatTyArrow ([FlatTyInt], FlatTyBool), 1));
-   ("even", (FlatTyArrow ([FlatTyInt], FlatTyBool), 1));
-   ("(&&)", (FlatTyArrow ([FlatTyBool; FlatTyBool], FlatTyBool), 1));
-   ("(||)", (FlatTyArrow ([FlatTyBool; FlatTyBool], FlatTyBool), 1));
-   ("not", (FlatTyArrow ([FlatTyBool], FlatTyBool), 1));
-   ("True", (FlatTyBool, 1));
-   ("False", (FlatTyBool, 1));
-   ("((==)::Int -> Int -> Bool)", (FlatTyArrow ([FlatTyInt; FlatTyInt], FlatTyBool), 1));
-   ("((==)::Bool -> Bool -> Bool)", (FlatTyArrow ([FlatTyBool; FlatTyBool], FlatTyBool), 1));
-   ("((==)::[Int] -> [Int] -> Bool)", (FlatTyArrow ([FlatTyList FlatTyInt; FlatTyList FlatTyInt], FlatTyBool), 1));
-   ("undefined", (FlatTyVar "a", 32));
+  [("seq", FlatTyArrow ([FlatTyVar "b"; FlatTyVar "a"], FlatTyVar "a"));
+   ("id", FlatTyArrow ([FlatTyVar "a"], FlatTyVar "a"));
+   ("0", FlatTyInt);
+   ("1", FlatTyInt);
+   ("2", FlatTyInt);
+   ("(+)", FlatTyArrow ([FlatTyInt; FlatTyInt], FlatTyInt));
+   ("(+1)", FlatTyArrow ([FlatTyInt], FlatTyInt));
+   ("(-)", FlatTyArrow ([FlatTyInt; FlatTyInt], FlatTyInt));
+   ("[]", FlatTyList (FlatTyVar "a"));
+   ("(:)", FlatTyArrow ([FlatTyVar "a"; FlatTyList (FlatTyVar "a")], FlatTyList (FlatTyVar "a")));
+   ("head", FlatTyArrow ([FlatTyList (FlatTyVar "a")], FlatTyVar "a"));
+   ("tail", FlatTyArrow ([FlatTyList (FlatTyVar "a")], FlatTyList (FlatTyVar "a")));
+   ("take", FlatTyArrow ([FlatTyInt; FlatTyList (FlatTyVar "a")], FlatTyList (FlatTyVar "a")));
+   ("(!!)", FlatTyArrow ([FlatTyList (FlatTyVar "a"); FlatTyInt], FlatTyVar "a"));
+   ("length", FlatTyArrow ([FlatTyList (FlatTyVar "a")], FlatTyInt));
+   ("(++)", FlatTyArrow ([FlatTyList (FlatTyVar "a"); FlatTyList (FlatTyVar "a")],
+                         FlatTyList (FlatTyVar "a")));
+   ("filter", FlatTyArrow ([FlatTyArrow ([FlatTyVar "a"], FlatTyBool); FlatTyList (FlatTyVar "a")],
+                           FlatTyList (FlatTyVar "a")));
+   ("map", FlatTyArrow ([FlatTyArrow ([FlatTyVar "a"], FlatTyVar "b"); FlatTyList (FlatTyVar "a")],
+                        FlatTyList (FlatTyVar "b")));
+   ("foldr", FlatTyArrow ([FlatTyArrow ([FlatTyVar "b"; FlatTyVar "a"], FlatTyVar "a");
+                           FlatTyVar "a"; FlatTyList (FlatTyVar "b")],
+                          FlatTyVar "a"));
+   ("odd", FlatTyArrow ([FlatTyInt], FlatTyBool));
+   ("even", FlatTyArrow ([FlatTyInt], FlatTyBool));
+   ("(&&)", FlatTyArrow ([FlatTyBool; FlatTyBool], FlatTyBool));
+   ("(||)", FlatTyArrow ([FlatTyBool; FlatTyBool], FlatTyBool));
+   ("not", FlatTyArrow ([FlatTyBool], FlatTyBool));
+   ("True", FlatTyBool);
+   ("False", FlatTyBool);
+   ("((==)::Int -> Int -> Bool)", FlatTyArrow ([FlatTyInt; FlatTyInt], FlatTyBool));
+   ("((==)::Bool -> Bool -> Bool)", FlatTyArrow ([FlatTyBool; FlatTyBool], FlatTyBool));
+   ("((==)::[Int] -> [Int] -> Bool)", FlatTyArrow ([FlatTyList FlatTyInt; FlatTyList FlatTyInt], FlatTyBool));
+   ("undefined", FlatTyVar "a");
   ]
 
 let generate_palka _size =

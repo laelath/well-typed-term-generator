@@ -68,7 +68,7 @@ type program = {
     (* the head node of the program *)
     mutable head : exp_label;
 
-    std_lib : (string * (Type.flat_ty * int)) list;
+    std_lib : (string * Type.flat_ty) list;
 
     (* variable operations *)
     new_var : unit -> var;
@@ -329,7 +329,7 @@ let type_check (prog : program) =
     | StdLibRef str ->
       (match List.assoc_opt str prog.std_lib with
        | None -> raise (TypeCheckError "std lib object not found")
-       | Some (ty', _) -> ensure_ty_compat ty' node.ty; node.ty)
+       | Some ty' -> ensure_ty_compat ty' node.ty; node.ty)
 
     | ValInt _ ->
       if (prog.ty.get_ty node.ty) == TyInt
