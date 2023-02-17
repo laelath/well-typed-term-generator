@@ -204,13 +204,13 @@ type rule_urn = (unit -> Exp.exp_label list) Urn.t
 
 let steps_generator (prog : Exp.program) (hole : hole_info) (acc : rule_urn)
                     (rule : Exp.program -> hole_info -> 'a -> unit -> Exp.exp_label list)
-                    (weight : hole_info -> 'a -> int)
+                    (weight : hole_info -> 'a -> float)
                     (collection : 'a list) =
   List.fold_left (fun acc a ->
                   Urn.insert acc (weight hole a) (Urn.Value (rule prog hole a)))
              acc collection
 
-let bucket (bucket_weight : Exp.program -> hole_info -> int) steps (weight : Exp.program -> hole_info -> int) (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
+let bucket (bucket_weight : Exp.program -> hole_info -> float) steps (weight : Exp.program -> hole_info -> int) (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
   let nested = fun () -> steps weight prog hole acc in
   Urn.insert acc (bucket_weight prog hole) (Urn.Nested nested)
 
@@ -262,7 +262,7 @@ let std_lib_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_urn
   (* TODO: FIXME: GROSS: HACK: *)
   let weight' hi x =
     match x with
-    | "undefined" -> weight hi x / 2
+    | "undefined" -> weight hi x /. 10.
     | _ -> weight hi x
     in
   steps_generator prog hole acc
@@ -323,12 +323,12 @@ let palka_seq_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_u
 
 type t = ((Exp.program -> hole_info -> rule_urn -> rule_urn) list)
 
-let c (w : int) (_ : hole_info) _ = w
+let c (w : float) (_ : hole_info) _ = w
 let w_const n = c n
-let w_fuel_base n m (hole : hole_info) _ = hole.fuel * n + m
-let w_fuel_depth (hole : hole_info) _ = max 0 (hole.fuel - hole.depth)
+let w_fuel_base n m (hole : hole_info) _ = Int.to_float hole.fuel *. n +. m
+let w_fuel_depth (hole : hole_info) _ = Int.to_float (max 0 (hole.fuel - hole.depth))
 
-let w_fuel n = w_fuel_base n 0
+let w_fuel n = w_fuel_base n 0.
 
 let not_base weight (hole : hole_info) =
   if hole.fuel = 0
@@ -340,16 +340,16 @@ let s rule weight =
 
 let main : t =
   [
-    var_steps                       ( w_const 2       );
-    std_lib_steps                   ( w_const 1       );
-    lambda_steps                    ( w_fuel_base 2 1 );
-    ext_lambda_steps                ( w_fuel_base 4 1 );
-    not_useless_steps               ( w_fuel_base 2 1 );
-    let_insertion_steps             ( w_fuel_depth    );
-    palka_rule_steps                ( w_fuel 2        );
-    std_lib_palka_rule_steps        ( w_fuel 2        );
-    s Rules.ext_function_call_step  ( w_fuel 1        );
-    palka_seq_steps                 ( w_fuel 1        );
+    var_steps                       ( w_const 2.        );
+    std_lib_steps                   ( w_const 1.        );
+    lambda_steps                    ( w_fuel_base 2. 1. );
+    ext_lambda_steps                ( w_fuel_base 4. 1. );
+    not_useless_steps               ( w_fuel_base 2. 1. );
+    let_insertion_steps             ( w_fuel_depth      );
+    palka_rule_steps                ( w_fuel 2.         );
+    std_lib_palka_rule_steps        ( w_fuel 2.         );
+    s Rules.ext_function_call_step  ( w_fuel 1.         );
+    palka_seq_steps                 ( w_fuel 1.         );
   ]
 
 (*

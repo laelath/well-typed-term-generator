@@ -36,7 +36,7 @@ let assert_hole (exp : Exp.exp) =
   | Exp.Hole -> ()
   | _ -> raise (Util.Impossible "worklist exp is not a hole")
 
-let sample n = Random.int n
+let sample n = Random.float n
 
 let generate_exp (steps : Generators.t) (fuel : int) (prog : Exp.program) (e : Exp.exp_label) =
   let node = prog.get_exp e in
@@ -50,7 +50,7 @@ let generate_exp (steps : Generators.t) (fuel : int) (prog : Exp.program) (e : E
     depth=Generators.exp_depth prog e;
   } in
   let steps = List.fold_left (fun acc g -> g prog hole acc) Urn.empty steps in
-  let rec sample_lp urn = 
+  let rec sample_lp urn =
     match Urn.remove_opt sample urn with
     | Some (_, base, rest) -> (
        try
