@@ -262,6 +262,8 @@ let std_lib_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_urn
   (* TODO: FIXME: GROSS: HACK: *)
   let weight' hi x =
     match x with
+    | "head" | "tail" -> weight hi x /. 2.
+    | "(!!)" -> weight hi x /. 3.
     | "undefined" -> weight hi x /. 10.
     | _ -> weight hi x
     in
