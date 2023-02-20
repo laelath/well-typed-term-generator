@@ -134,8 +134,15 @@ let generate_palka _size =
 *)
 
 let generate_not_useless size =
+  let std_lib_m x = 
+    match x with
+    | "head" | "tail" -> 1. /. 2.
+    | "(!!)" -> 1. /. 3.
+    | "undefined" -> 1. /. 10.
+    | _ -> 1. in
   let open Type in
-  Generate.generate_fp Generators.main ~std_lib:haskell_std_lib size (FlatTyArrow ([FlatTyList FlatTyInt], (FlatTyList FlatTyInt)))
+  let gen_ty = FlatTyArrow ([FlatTyList FlatTyInt], FlatTyList FlatTyInt) in
+  Generate.generate_fp (Generators.main std_lib_m) ~std_lib:haskell_std_lib size gen_ty
 
 let generate_batch (generate : int -> Exp.program) batch size =
   let rec gen_batch batch acc =

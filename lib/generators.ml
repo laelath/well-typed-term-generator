@@ -257,22 +257,18 @@ let var_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
                   Rules.var_step weight ref_vars
 
 
-let std_lib_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
+let std_lib_steps multiplier weight (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
   let valid_refs = find_std_lib_refs prog hole.ty_label (fun _ -> true) in
   (* TODO: FIXME: GROSS: HACK: *)
-  let weight' hi x =
-    match x with
-    | "head" | "tail" -> weight hi x /. 2.
-    | "(!!)" -> weight hi x /. 3.
-    | "undefined" -> weight hi x /. 10.
-    | _ -> weight hi x
-    in
+  (* BEN: Less gross? do we want to handle the std lib palka this rule symmetrically? *)
+  let weight' hi x = (weight hi x) *. (multiplier x) in
   steps_generator prog hole acc
                   Rules.std_lib_step weight' valid_refs
 
 
 let std_lib_palka_rule_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
   let valid_refs = find_std_lib_funcs prog hole.ty_label (fun _ -> true) in
+
   steps_generator prog hole acc
                   Rules.std_lib_palka_rule_step weight valid_refs
 
@@ -340,10 +336,11 @@ let not_base weight (hole : hole_info) =
 let s rule weight =
   singleton_generator weight rule
 
-let main : t =
+let main : (string -> float) -> t =
+  fun std_lib_m ->
   [
     var_steps                       ( w_const 2.        );
-    std_lib_steps                   ( w_const 1.        );
+    std_lib_steps std_lib_m         ( w_const 1.        );
     lambda_steps                    ( w_fuel_base 2. 1. );
     ext_lambda_steps                ( w_fuel_base 4. 1. );
     not_useless_steps               ( w_fuel_base 2. 1. );
