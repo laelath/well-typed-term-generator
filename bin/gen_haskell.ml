@@ -216,14 +216,14 @@ let testtype2 gen_type n size =
                                                         let () = Auxilliary.let_bind e in
                                                         let e2 = haskell_string e in
                                                         "(" ^ e1 ^ ", " ^ e2 ^ ")") in
-  print_string (generate_file fs "handler (E.ErrorCall s) = putStrLn $ \"*** Exception: \"" "" "[([Int] -> [Int]), ([Int] -> [Int])]" two_code)
+  print_string (generate_file fs "handler (E.ErrorCall s) = putStrLn $ \"*** Exception: \"" "" "[([Int] -> [Int], [Int] -> [Int])]" two_code)
 
 let testtype3 gen_type n size = 
   let generate = gen_type in
   let batch = n in
   let fs = generate_batch generate batch size (fun e -> let (e1, e2) = Auxilliary.diff_errors e "hiddenError" "undefined" haskell_string in
                                                         "(" ^ e1 ^ ", " ^ e2 ^ ")") in
-  print_string (generate_file fs "handler (E.ErrorCall s) = putStrLn $ \"*** Exception: \"" "hiddenError = error \"hidden error\"" "[([Int] -> [Int]), ([Int] -> [Int])]" two_code)
+  print_string (generate_file fs "handler (E.ErrorCall s) = putStrLn $ \"*** Exception: \"" "hiddenError = error \"hidden error\"" "[([Int] -> [Int], [Int] -> [Int])]" two_code)
 
 
 let n = ref 100
