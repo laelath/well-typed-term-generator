@@ -40,6 +40,7 @@ type exp =
   | Empty
   | Match of (exp_label * exp_label * (var * var * exp_label))
   | If of (exp_label * exp_label * exp_label)
+  | Custom of string
 (*
   | Data of {
       dcon : Data.dcon;
@@ -280,6 +281,7 @@ let consistency_check prog =
          | Data {dcon=_; args=_} -> () (* todo *)
          | Match {arg=_; pats=_} -> () (* todo *)
 *)
+         | Custom _ -> ()
     in
   (* check that the argsvars points to params, ty_params, and args *)
   check None prog.head
@@ -430,6 +432,7 @@ let type_check (prog : program) =
       (* todo: i have no idea what is going on with dcons at all *)
       (* todo: wtaf am i supposed to do here *)
 *)
+    | Custom _ -> node.ty
   in
   (* throw away the type label *)
   let _ = type_check_exp [] prog.head in

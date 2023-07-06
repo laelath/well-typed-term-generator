@@ -83,6 +83,7 @@ let haskell_string (prog : Exp.program) =
       "(if " ^ str_exp pred
       ^ " then " ^ str_exp thn
       ^ " else " ^ str_exp els ^ ")"
+    | Custom str -> str
   in
   str_exp prog.head
 
@@ -144,29 +145,29 @@ let generate_not_useless size =
   let gen_ty = FlatTyArrow ([FlatTyList FlatTyInt], FlatTyList FlatTyInt) in
   Generate.generate_fp (Generators.main std_lib_m) ~std_lib:haskell_std_lib size gen_ty
 
-let generate_batch (generate : int -> Exp.program) batch size =
+let generate_batch (generate : int -> Exp.program) batch size f =
   let rec gen_batch batch acc =
     if batch == 0
     then acc
     else let p = generate size in
          Debug.run (fun () -> Printf.eprintf ("\n"));
-         gen_batch (batch - 1) (haskell_string p :: acc)
+         gen_batch (batch - 1) (f p :: acc)
   in
   gen_batch batch []
 
-let generate_file ?(sep = "====") (generate : int -> Exp.program) batch size =
-  let fs = generate_batch generate batch size in
+let generate_file ?(sep = "====") fs handler prelude =
   "module Main where\n" ^
   "import Control.Monad\n" ^
   "import qualified Control.Exception as E\n" ^
   "import System.IO (hSetBuffering, stdout, BufferMode (NoBuffering))\n" ^
-  "handler (E.ErrorCall s) = putStrLn $ \"*** Exception: \"\n" ^
+  handler ^ "\n" ^
   "incomplete1 0 = [undefined]\n" ^
   "incomplete1 n = n:(incomplete1 (n-1))\n" ^
   "incomplete2 0 = undefined\n" ^
   "incomplete2 n = n:(incomplete2 (n-1))\n" ^
   "incomplete3 n 0 = undefined:reverse [0..n-1]\n" ^
   "incomplete3 n m = n:incomplete3 (n-1) (m-1)\n" ^
+  prelude ^ "\n" ^
   "codeList :: [[Int] -> [Int]]\n" ^
   "codeList = [\n  " ^ String.concat ",\n  " fs ^ "\n  ]\n" ^
   "main = do\n" ^
@@ -181,12 +182,44 @@ let generate_file ?(sep = "====") (generate : int -> Exp.program) batch size =
   "    putStrLn \"" ^ sep ^ "\"\n"
 
 
+(* -O -fno-full-laziness *)
+let testtype0 gen_type n size = 
+  let generate = gen_type in
+  let batch = n in
+  let fs = generate_batch generate batch size (fun e -> haskell_string e) in
+  print_string (generate_file fs "handler (E.ErrorCall s) = putStrLn $ \"*** Exception: \"" "")
+
+(* -O -fno-full-laziness *)
+let testtype1 gen_type n size = 
+  let generate = gen_type in
+  let batch = n in
+  let fs = generate_batch generate batch size (fun e -> Auxilliary.remove_two e; haskell_string e) in
+  print_string (generate_file fs "handler (E.ErrorCall s) = putStrLn $ \"*** Exception: \" ++ s" "")
+
+let testtype2 gen_type n size = 
+  let generate = gen_type in
+  let batch = n in
+  let fs = generate_batch generate batch size (fun e -> let e1 = haskell_string e in
+                                                        let () = Auxilliary.let_bind e in
+                                                        let e2 = haskell_string e in
+                                                        "(" ^ e1 ^ ", " ^ e2 ^ ")") in
+  print_string (generate_file fs "handler (E.ErrorCall s) = putStrLn $ \"*** Exception: \"" "")
+
+let testtype3 gen_type n size = 
+  let generate = gen_type in
+  let batch = n in
+  let fs = generate_batch generate batch size (fun e -> let (e1, e2) = Auxilliary.diff_errors e "hiddenError" "undefined" haskell_string in
+                                                        "(" ^ e1 ^ ", " ^ e2 ^ ")") in
+  print_string (generate_file fs "handler (E.ErrorCall s) = putStrLn $ \"*** Exception: \"" "hiddenError = error \"hidden error\"")
+
+
 let n = ref 100
 let size = ref 25
 let seed = ref (-1)
 let gen_type_palka = "palka"
 let gen_type_not_useless = "not_useless"
 let gen_type = ref gen_type_not_useless
+let testtype = ref 0
 
 let speclist =
   [
@@ -194,10 +227,11 @@ let speclist =
     ("-size", Arg.Set_int size, "Size of each function");
     ("-seed", Arg.Set_int seed, "Random generator seed");
     ("-type", Arg.Set_string gen_type, "Generator type (\"" ^ gen_type_palka ^ "\" or \"" ^ gen_type_not_useless ^ "\")");
+    ("-testtype", Arg.Set_int testtype, "Test type (\"" ^ "0 or 1 or 2 or 3" ^ "\")");
   ]
 
 let () =
-  Arg.parse speclist (fun _ -> ()) "gen_haskell [-n <100>] [-size <100>] [-seed <-1>";
+  Arg.parse speclist (fun _ -> ()) "gen_haskell [-testtype <0>] [-n <100>] [-size <100>] [-seed <-1>";
   (if !seed < 0
    then Random.self_init ()
    else Random.init !seed);
@@ -207,4 +241,9 @@ let () =
                  else if s = gen_type_not_useless
                  then generate_not_useless
                  else raise Util.Unimplemented in
-  print_string (generate_file gen_type (!n) (!size))
+  match !testtype with
+  | 0 -> testtype0 gen_type (!n) (!size)
+  | 1 -> testtype1 gen_type (!n) (!size)
+  | 2 -> testtype2 gen_type (!n) (!size)
+  | 3 -> testtype3 gen_type (!n) (!size)
+  | _ -> raise Util.Unimplemented

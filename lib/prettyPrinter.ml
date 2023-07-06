@@ -77,6 +77,7 @@ let pretty_print (prog : Exp.program) : unit =
       let pred = "if "
                  ::"\n"::(tab tab_i1)::(print_e pred tab_i1 thn) in
       pred
+    | Custom str -> [str]
   in
   print_string (String.concat "" (print_e prog.head 0 []));
   print_string("\n")
