@@ -40,6 +40,9 @@ let sample n = Random.float n
 
 (* replaces two subterms (chosen uniformly) with errors using "Custom" *)
 let remove_two (prog : Exp.program) =
+  let set_prev e e' = 
+    let node = prog.get_exp e in
+    prog.set_exp e {exp=node.exp; ty=node.ty; prev=Some e'} in
   let subterms = urn_of_subterms prog in
   let e1 = Urn.sample sample subterms in
   let e2 = let rec find_diff () = 
@@ -52,8 +55,20 @@ let remove_two (prog : Exp.program) =
   (* TODO: abstract e1 e2 by variables in an outer lambda and apply it to the two error terms. *)
   let node1 = prog.get_exp e1 in
   let node2 = prog.get_exp e2 in
-  prog.set_exp e1 {exp=Custom "(error \"A\")"; ty=node1.ty; prev=node1.prev};
-  prog.set_exp e2 {exp=Custom "(error \"B\")"; ty=node2.ty; prev=node2.prev};
+  let x = prog.new_var () in
+  let y = prog.new_var () in
+  let errorA = prog.new_exp {exp=Custom "(error \"A\")"; ty=node1.ty; prev=None} in
+  let errorB = prog.new_exp {exp=Custom "(error \"B\")"; ty=node2.ty; prev=None} in
+  let head = prog.head in
+  let lambda = prog.new_exp {exp=Lambda ([x; y], head); ty=prog.ty.new_ty (TyArrow ([node1.ty; node2.ty], (prog.get_exp head).ty)); prev=None} in
+  let head' = prog.new_exp {exp=Call (lambda, [errorA; errorB]); ty=(prog.get_exp head).ty; prev=None} in
+  prog.set_exp e1 {exp=Var x; ty=node1.ty; prev=node1.prev};
+  prog.set_exp e2 {exp=Var y; ty=node1.ty; prev=node1.prev};
+  prog.head <- head';
+  set_prev head lambda;
+  set_prev lambda head';
+  set_prev errorA head';
+  set_prev errorB head';
   ()
 
 (* replaces a subterm "e" (chosen uniformly) with a reference to a new variable "x", 
