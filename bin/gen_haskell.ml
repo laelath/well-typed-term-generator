@@ -155,7 +155,7 @@ let generate_batch (generate : int -> Exp.program) batch size f =
   in
   gen_batch batch []
 
-let generate_file ?(sep = "====") fs handler prelude =
+let generate_file ?(sep = "====") fs handler prelude tyann code =
   "module Main where\n" ^
   "import Control.Monad\n" ^
   "import qualified Control.Exception as E\n" ^
@@ -168,10 +168,13 @@ let generate_file ?(sep = "====") fs handler prelude =
   "incomplete3 n 0 = undefined:reverse [0..n-1]\n" ^
   "incomplete3 n m = n:incomplete3 (n-1) (m-1)\n" ^
   prelude ^ "\n" ^
-  "codeList :: [[Int] -> [Int]]\n" ^
+  "codeList :: " ^ tyann ^ "\n" ^
   "codeList = [\n  " ^ String.concat ",\n  " fs ^ "\n  ]\n" ^
   "main = do\n" ^
   "  hSetBuffering stdout NoBuffering\n" ^
+  code sep
+
+let one_code sep = 
   "  forM_ codeList $ \\code -> do\n" ^
   "    forM_ [0..5] $ \\x -> do\n" ^
   "      E.catch (print $ code $ incomplete1 x) handler\n" ^
@@ -181,20 +184,30 @@ let generate_file ?(sep = "====") fs handler prelude =
   "      E.catch (print $ code $ incomplete3 x y) handler\n" ^
   "    putStrLn \"" ^ sep ^ "\"\n"
 
+let two_code sep = 
+  "  forM_ codeList $ \\code1, code2 -> do\n" ^
+  "    forM_ [0..5] $ \\x -> do\n" ^
+  "      E.catch (print $ code1 $ incomplete1 x, print $ code2 $ incomplete1 x) handler\n" ^
+  "    forM_ [0..5] $ \\x -> do\n" ^
+  "      E.catch (print $ code1 $ incomplete2 x, print $ code2 $ incomplete2 x) handler\n" ^
+  "    forM_ [0..5] $ \\x -> forM_ [0..x] $ \\y -> do\n" ^
+  "      E.catch (print $ code1 $ incomplete3 x y, print $ code2 $ incomplete3 x y) handler\n" ^
+  "    putStrLn \"" ^ sep ^ "\"\n"
+
 
 (* -O -fno-full-laziness *)
 let testtype0 gen_type n size = 
   let generate = gen_type in
   let batch = n in
   let fs = generate_batch generate batch size (fun e -> haskell_string e) in
-  print_string (generate_file fs "handler (E.ErrorCall s) = putStrLn $ \"*** Exception: \"" "")
+  print_string (generate_file fs "handler (E.ErrorCall s) = putStrLn $ \"*** Exception: \"" "" "[[Int] -> [Int]]" one_code)
 
 (* -O -fno-full-laziness *)
 let testtype1 gen_type n size = 
   let generate = gen_type in
   let batch = n in
   let fs = generate_batch generate batch size (fun e -> Auxilliary.remove_two e; haskell_string e) in
-  print_string (generate_file fs "handler (E.ErrorCall s) = putStrLn $ \"*** Exception: \" ++ s" "")
+  print_string (generate_file fs "handler (E.ErrorCall s) = putStrLn $ \"*** Exception: \" ++ s" "" "[[Int] -> [Int]]" one_code)
 
 let testtype2 gen_type n size = 
   let generate = gen_type in
@@ -203,14 +216,14 @@ let testtype2 gen_type n size =
                                                         let () = Auxilliary.let_bind e in
                                                         let e2 = haskell_string e in
                                                         "(" ^ e1 ^ ", " ^ e2 ^ ")") in
-  print_string (generate_file fs "handler (E.ErrorCall s) = putStrLn $ \"*** Exception: \"" "")
+  print_string (generate_file fs "handler (E.ErrorCall s) = putStrLn $ \"*** Exception: \"" "" "[([Int] -> [Int]) * ([Int] -> [Int])]" two_code)
 
 let testtype3 gen_type n size = 
   let generate = gen_type in
   let batch = n in
   let fs = generate_batch generate batch size (fun e -> let (e1, e2) = Auxilliary.diff_errors e "hiddenError" "undefined" haskell_string in
                                                         "(" ^ e1 ^ ", " ^ e2 ^ ")") in
-  print_string (generate_file fs "handler (E.ErrorCall s) = putStrLn $ \"*** Exception: \"" "hiddenError = error \"hidden error\"")
+  print_string (generate_file fs "handler (E.ErrorCall s) = putStrLn $ \"*** Exception: \"" "hiddenError = error \"hidden error\"" "[([Int] -> [Int]) * ([Int] -> [Int])]" two_code)
 
 
 let n = ref 100
