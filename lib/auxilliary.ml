@@ -112,24 +112,30 @@ let let_bind (prog : Exp.program) =
     let node = prog.get_exp e in
     prog.set_exp e {exp=node.exp; ty=node.ty; prev=Some e'} in
   let subterms = urn_of_subterms prog in
-  let e = let rec find_diff () = 
+  let e = let rec find_diff n = 
+            if n = 0
+            then None
+            else
              let e = Urn.sample sample subterms in
              if Exp.ExpLabel.equal prog.head e || not (no_vars prog e)
-             then find_diff()
-             else e in
-          find_diff() in
-  let head = prog.head in
-  let node = prog.get_exp e in
-  let x = prog.new_var() in
-  let e' = prog.new_exp {exp=node.exp; ty=node.ty; prev=None} in
-  let head_ty = (prog.get_exp head).ty in
-  let head' = prog.new_exp {exp=Let (x, e', head); ty=head_ty; prev=None} in
-  prog.head <- head';
-  prog.set_exp e {exp=Var x; ty=node.ty; prev=node.prev};
-  set_prev e' head';
-  set_prev head head';
-  ()
-  
+             then find_diff (n-1)
+             else Some e in
+          find_diff 1000 in
+  match e with
+  | None -> ()
+  | Some e ->
+     let head = prog.head in
+     let node = prog.get_exp e in
+     let x = prog.new_var() in
+     let e' = prog.new_exp {exp=node.exp; ty=node.ty; prev=None} in
+     let head_ty = (prog.get_exp head).ty in
+     let head' = prog.new_exp {exp=Let (x, e', head); ty=head_ty; prev=None} in
+     prog.head <- head';
+     prog.set_exp e {exp=Var x; ty=node.ty; prev=node.prev};
+     set_prev e' head';
+     set_prev head head';
+     ()
+
 
 let diff_errors (prog : Exp.program) (error1 : string) (error2 : string) (to_string : Exp.program -> string) = 
   let subterms = urn_of_subterms prog in
