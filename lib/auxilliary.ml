@@ -36,6 +36,35 @@ let urn_of_subterms (prog : Exp.program) =
   find prog.head;
   !urn
 
+let no_vars (prog : Exp.program) (e0 : Exp.ExpLabel.t) = 
+  let rec find e =
+    let node = prog.get_exp e in
+    match node.exp with
+    | Hole -> true
+    | Var _ -> false
+    | StdLibRef _ -> true
+    | ValInt _ -> true
+    | Empty -> true
+    | Cons (e1, e2) -> 
+       find e1 && find e2
+    | Match (e1, e2, (_, _, e3)) ->
+       find e1 && find e2 && find e3
+    | ValBool _ -> true
+    | Let (_, rhs, body) ->
+       find rhs && find body
+    | Lambda (_, body) ->
+       find body
+    | Call (func, args) ->
+       find func && List.for_all find args
+    | ExtLambda (_, body) ->
+       find body
+    | ExtCall (func, args) ->
+       find func && List.for_all find (prog.get_args args)
+    | If (pred, thn, els) ->
+       find pred && find thn && find els
+    | Custom _ -> true in
+  find e0
+
 let sample n = Random.float n
 
 (* replaces two subterms (chosen uniformly) with errors using "Custom" *)
@@ -85,7 +114,7 @@ let let_bind (prog : Exp.program) =
   let subterms = urn_of_subterms prog in
   let e = let rec find_diff () = 
              let e = Urn.sample sample subterms in
-             if Exp.ExpLabel.equal prog.head e
+             if Exp.ExpLabel.equal prog.head e || not (no_vars prog e)
              then find_diff()
              else e in
           find_diff() in
