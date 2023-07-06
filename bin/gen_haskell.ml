@@ -185,13 +185,13 @@ let one_code sep =
   "    putStrLn \"" ^ sep ^ "\"\n"
 
 let two_code sep = 
-  "  forM_ codeList $ \\code1, code2 -> do\n" ^
+  "  forM_ codeList $ \\(code1, code2) -> do\n" ^
   "    forM_ [0..5] $ \\x -> do\n" ^
-  "      E.catch (print $ code1 $ incomplete1 x, print $ code2 $ incomplete1 x) handler\n" ^
+  "      E.catch (do (print $ code1 $ incomplete1 x); (print $ code2 $ incomplete1 x)) handler\n" ^
   "    forM_ [0..5] $ \\x -> do\n" ^
-  "      E.catch (print $ code1 $ incomplete2 x, print $ code2 $ incomplete2 x) handler\n" ^
+  "      E.catch (do (print $ code1 $ incomplete2 x); (print $ code2 $ incomplete2 x)) handler\n" ^
   "    forM_ [0..5] $ \\x -> forM_ [0..x] $ \\y -> do\n" ^
-  "      E.catch (print $ code1 $ incomplete3 x y, print $ code2 $ incomplete3 x y) handler\n" ^
+  "      E.catch (do (print $ code1 $ incomplete3 x y); (print $ code2 $ incomplete3 x y)) handler\n" ^
   "    putStrLn \"" ^ sep ^ "\"\n"
 
 
@@ -216,14 +216,14 @@ let testtype2 gen_type n size =
                                                         let () = Auxilliary.let_bind e in
                                                         let e2 = haskell_string e in
                                                         "(" ^ e1 ^ ", " ^ e2 ^ ")") in
-  print_string (generate_file fs "handler (E.ErrorCall s) = putStrLn $ \"*** Exception: \"" "" "[([Int] -> [Int]) * ([Int] -> [Int])]" two_code)
+  print_string (generate_file fs "handler (E.ErrorCall s) = putStrLn $ \"*** Exception: \"" "" "[([Int] -> [Int]), ([Int] -> [Int])]" two_code)
 
 let testtype3 gen_type n size = 
   let generate = gen_type in
   let batch = n in
   let fs = generate_batch generate batch size (fun e -> let (e1, e2) = Auxilliary.diff_errors e "hiddenError" "undefined" haskell_string in
                                                         "(" ^ e1 ^ ", " ^ e2 ^ ")") in
-  print_string (generate_file fs "handler (E.ErrorCall s) = putStrLn $ \"*** Exception: \"" "hiddenError = error \"hidden error\"" "[([Int] -> [Int]) * ([Int] -> [Int])]" two_code)
+  print_string (generate_file fs "handler (E.ErrorCall s) = putStrLn $ \"*** Exception: \"" "hiddenError = error \"hidden error\"" "[([Int] -> [Int]), ([Int] -> [Int])]" two_code)
 
 
 let n = ref 100
