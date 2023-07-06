@@ -187,11 +187,11 @@ let one_code sep =
 let two_code sep = 
   "  forM_ codeList $ \\(code1, code2) -> do\n" ^
   "    forM_ [0..5] $ \\x -> do\n" ^
-  "      E.catch (do (print $ code1 $ incomplete1 x); (print $ code2 $ incomplete1 x)) handler\n" ^
+  "      do (E.catch (print $ code1 $ incomplete1 x) handler); (E.catch (print $ code2 $ incomplete1 x) handler)\n" ^
   "    forM_ [0..5] $ \\x -> do\n" ^
-  "      E.catch (do (print $ code1 $ incomplete2 x); (print $ code2 $ incomplete2 x)) handler\n" ^
+  "      do (E.catch (print $ code1 $ incomplete2 x) handler); (E.catch (print $ code2 $ incomplete2 x) handler)\n" ^
   "    forM_ [0..5] $ \\x -> forM_ [0..x] $ \\y -> do\n" ^
-  "      E.catch (do (print $ code1 $ incomplete3 x y); (print $ code2 $ incomplete3 x y)) handler\n" ^
+  "      do (E.catch (print $ code1 $ incomplete3 x y) handler); (E.catch (print $ code2 $ incomplete3 x y) handler)\n" ^
   "    putStrLn \"" ^ sep ^ "\"\n"
 
 
