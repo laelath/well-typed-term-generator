@@ -106,7 +106,7 @@ let remove_two (prog : Exp.program) =
    This will break in the presence of type variables since the type of "x" may refer to type variables.
  *)
 
-let let_bind (prog : Exp.program) =
+let let_bind (prog : Exp.program) (to_string : Exp.program -> string) =
   (* set prev of e to be e' *)
   let set_prev e e' = 
     let node = prog.get_exp e in
@@ -122,10 +122,13 @@ let let_bind (prog : Exp.program) =
              else Some e in
           find_diff 1000 in
   match e with
-  | None -> ()
+  | None -> (to_string prog, to_string prog)
   | Some e ->
-     let head = prog.head in
      let node = prog.get_exp e in
+     prog.set_exp e {exp=Custom "(error \"A\")"; ty=node.ty; prev=None};
+     let string1 = to_string prog in
+     let node = prog.get_exp e in
+     let head = prog.head in
      let x = prog.new_var() in
      let e' = prog.new_exp {exp=node.exp (*Custom "(error \"A\")"*); ty=node.ty; prev=None} in
      let head_ty = (prog.get_exp head).ty in
@@ -134,7 +137,8 @@ let let_bind (prog : Exp.program) =
      prog.set_exp e {exp=Var x; ty=node.ty; prev=node.prev};
      set_prev e' head';
      set_prev head head';
-     ()
+     let string2 = to_string prog in
+     (string1, string2)
 
 
 let diff_errors (prog : Exp.program) (error1 : string) (error2 : string) (to_string : Exp.program -> string) = 
