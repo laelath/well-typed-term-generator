@@ -127,7 +127,7 @@ let let_bind (prog : Exp.program) =
      let head = prog.head in
      let node = prog.get_exp e in
      let x = prog.new_var() in
-     let e' = prog.new_exp {exp=node.exp; ty=node.ty; prev=None} in
+     let e' = prog.new_exp {exp=(*node.exp*) Custom "(error \"A\")"; ty=node.ty; prev=None} in
      let head_ty = (prog.get_exp head).ty in
      let head' = prog.new_exp {exp=Let (x, e', head); ty=head_ty; prev=None} in
      prog.head <- head';
