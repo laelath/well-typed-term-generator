@@ -1,4 +1,7 @@
 
+A well-typed program generator framework written in OCaml.
+
+
 
 Required:
 ```
@@ -29,9 +32,3 @@ dune utop
 let Debug.debug_mode := true;;
 let p = Generate.generate_fp Generators.main 100 Exp.TyInt in PrettyPrinter.pretty_print p;;
 ```
-
-
-
-
-notes:
-When calling `ghc`, use `-Wno-overlapping-patterns`.
