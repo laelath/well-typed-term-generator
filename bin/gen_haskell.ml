@@ -33,7 +33,6 @@ let haskell_string (prog : Exp.program) =
   in
 
   let rec str_exp e =
-  (* let str_type ty = raise *)
 
     let str_args args =
       match args with
@@ -128,8 +127,10 @@ let haskell_std_lib =
   ]
 
 
+(*
 let generate_palka _size =
   raise Util.Unimplemented
+ *)
 (*
   let open Type in
   Generate.generate_fp Generators.palka ~std_lib:haskell_std_lib size (FlatTyArrow ([FlatTyList FlatTyInt], (FlatTyList FlatTyInt)))

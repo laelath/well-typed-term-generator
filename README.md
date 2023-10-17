@@ -20,8 +20,7 @@ dune build
 to run:
 ```
 mkdir log
-dune exec -- gen_haskell -type palka -n 1000 -size 100 > log/things1.hs 2> log/log1.txt
-dune exec -- gen_haskell -type not_useless -n 1000 -size 100 > log/things2.hs 2> log/log2.txt
+dune exec -- gen_haskell -type not_useless -n 1000 -size 100 > log/generated-terms.hs 2> log/generated-terms.txt
 ```
 
 
@@ -30,5 +29,5 @@ to debug:
 dune utop
 ...
 let Debug.debug_mode := true;;
-let p = Generate.generate_fp Generators.main 100 Exp.TyInt in PrettyPrinter.pretty_print p;;
+let p = Generate.generate_fp (Generators.main (fun x -> 1.)) 100 Type.FlatTyInt in PrettyPrinter.pretty_print p;;
 ```
