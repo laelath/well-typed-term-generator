@@ -19,8 +19,7 @@ dune build
 
 to run:
 ```
-mkdir log
-dune exec -- gen_haskell -type not_useless -n 1000 -size 100 > log/generated-terms.hs 2> log/generated-terms.txt
+dune exec -- gen_haskell -n 1000 -size 15
 ```
 
 
