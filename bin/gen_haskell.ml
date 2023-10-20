@@ -146,15 +146,19 @@ let generate_not_useless std_lib size =
   let gen_ty = FlatTyArrow ([FlatTyList FlatTyInt], FlatTyList FlatTyInt) in
   Generate.generate_fp (Generators.main std_lib_m) ~std_lib:std_lib size gen_ty
 
-let generate_batch (generate : (string * Type.flat_ty) list -> int -> Exp.program) std_lib batch size f =
+let generate_batch (generate : (string * Type.flat_ty) list -> int -> Exp.program) std_lib batch size =
   let rec gen_batch batch acc =
     if batch == 0
     then acc
     else let p = generate std_lib size in
-         Debug.run (fun () -> Printf.eprintf ("\n"));
-         gen_batch (batch - 1) (f p :: acc)
+         Debug.say (fun () -> "\n");
+         gen_batch (batch - 1) (p :: acc)
   in
-  gen_batch batch []
+  let progs = gen_batch batch [] in
+  Debug.run(fun () ->
+              let (ts, us) = List.split (List.map Exp.count_binds progs) in
+              Printf.eprintf "Total: %i, Unused: %i\n" (List.fold_left (+) 0 ts) (List.fold_left (+) 0 us));
+  progs
 
 let generate_file ?(sep = "====") fs handler prelude tyann code =
   "module Main where\n" ^
@@ -200,33 +204,32 @@ let two_code sep =
 let testtype0 gen_type n size = 
   let generate = gen_type in
   let batch = n in
-  let fs = generate_batch generate haskell_std_lib batch size 
-                          (fun e -> haskell_string e) in
+  let fs = List.map haskell_string (generate_batch generate haskell_std_lib batch size) in
   print_string (generate_file fs "handler (E.ErrorCall s) = putStrLn $ \"*** Exception: \"" "" "[[Int] -> [Int]]" one_code)
 
 (* -O -fno-full-laziness *)
 let testtype1 gen_type n size = 
   let generate = gen_type in
   let batch = n in
-  let fs = generate_batch generate haskell_std_lib batch size 
-                          (fun e -> Auxilliary.remove_two e; haskell_string e) in
+  let fs = List.map (fun e -> Auxilliary.remove_two e; haskell_string e)
+                    (generate_batch generate haskell_std_lib batch size) in
   print_string (generate_file fs "handler (E.ErrorCall s) = putStrLn $ \"*** Exception: \" ++ s" "" "[[Int] -> [Int]]" one_code)
 
 let testtype2 gen_type n size = 
   let generate = gen_type in
   let batch = n in
   let std_lib = haskell_std_lib @ [("(error \"A\")", Type.FlatTyVar "a")] in
-  let fs = generate_batch generate std_lib batch size 
-                          (fun e -> let (e1, e2) = Auxilliary.let_bind e haskell_string in
-                                     "(" ^ e1 ^ ", " ^ e2 ^ ")") in
+  let fs = List.map (fun e -> let (e1, e2) = Auxilliary.let_bind e haskell_string in
+                              "(" ^ e1 ^ ", " ^ e2 ^ ")")
+                    (generate_batch generate std_lib batch size) in
   print_string (generate_file fs "handler (E.ErrorCall s) = putStrLn $ \"*** Exception: \"" "" "[([Int] -> [Int], [Int] -> [Int])]" two_code)
 
 let testtype3 gen_type n size = 
   let generate = gen_type in
   let batch = n in
-  let fs = generate_batch generate haskell_std_lib batch size 
-                          (fun e -> let (e1, e2) = Auxilliary.diff_errors e "hiddenError" "undefined" haskell_string in
-                                    "(" ^ e1 ^ ", " ^ e2 ^ ")") in
+  let fs = List.map (fun e -> let (e1, e2) = Auxilliary.diff_errors e "hiddenError" "undefined" haskell_string in
+                              "(" ^ e1 ^ ", " ^ e2 ^ ")")
+                    (generate_batch generate haskell_std_lib batch size) in
   print_string (generate_file fs "handler (E.ErrorCall s) = putStrLn $ \"*** Exception: \"" "hiddenError = error \"hidden error\"" "[([Int] -> [Int], [Int] -> [Int])]" two_code)
 
 

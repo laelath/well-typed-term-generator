@@ -445,4 +445,93 @@ let check prog = (
     ()
   )
 
+(*
+let count_binds (prog : program) =
+  let rec exp_binds (e_lbl : exp_label) =
+    let node = prog.get_exp e_lbl in
+    match node.exp with
+    | Hole -> 0
+    | Var _ -> 0
+    | StdLibRef _ -> 0
+    | Let (_, rhs, body) -> 1 + exp_binds rhs + exp_binds body
+    | Lambda (vars, body) -> List.length vars + exp_binds body
+    | Call (f, args) -> List.fold_left (+) (exp_binds f) (List.map exp_binds args)
+    | ExtLambda (params_lbl, body) ->
+      let vars = prog.get_params params_lbl in
+      List.length vars + exp_binds body
+    | ExtCall (f, args_lbl) ->
+      let args = prog.get_args args_lbl in
+      List.fold_left (+) (exp_binds f) (List.map exp_binds args)
+    | ValInt _ -> 0
+    | ValBool _ -> 0
+    | Cons (e1, e2) -> exp_binds e1 + exp_binds e2
+    | Empty -> 0
+    | Match (e1, e2, (_, _, e3)) -> 2 + exp_binds e1 + exp_binds e2 + exp_binds e3
+    | If (pred, thn, els) -> exp_binds pred + exp_binds thn + exp_binds els
+    | Custom _ -> 0
+    in
+  exp_binds prog.head
+*)
 
+let count_binds (prog : program) =
+  let sum = List.fold_left (+) 0 in
+  let base = (Util.SS.empty, (0, 0)) in
+  let num_unbound free = List.fold_left (fun n x -> if Util.SS.mem (Var.to_string x) free then n else n + 1) 0 in
+  let remove_vars = List.fold_left (fun free x -> Util.SS.remove (Var.to_string x) free) in
+  let rec exp_binds (e_lbl : exp_label) : (Util.SS.t * (int * int)) =
+    let node = prog.get_exp e_lbl in
+    match node.exp with
+    | Hole -> base
+    | Var x -> (Util.SS.singleton (Var.to_string x), (0, 0))
+    | StdLibRef _ -> base
+    | Let (x, rhs, body) ->
+      let (free_rhs, (t_rhs, u_rhs)) = exp_binds rhs in
+      let (free_body, (t_body, u_body)) = exp_binds body in
+      (Util.SS.union free_rhs (remove_vars free_body [x]),
+       (1 + t_rhs + t_body,
+        u_rhs + u_body + num_unbound free_body [x]))
+    | Lambda (vars, body) ->
+      let (free, (t, u)) = exp_binds body in
+      (remove_vars free vars,
+       (t + List.length vars, u + num_unbound free vars))
+    | Call (f, args) ->
+      let (free_f, (t_f, u_f)) = exp_binds f in
+      let (frees_args, tus_args) = List.split (List.map exp_binds args) in
+      let (ts_args, us_args) = List.split tus_args in
+      (List.fold_left Util.SS.union free_f frees_args,
+       (sum ts_args + t_f, sum us_args + u_f))
+    | ExtLambda (params_lbl, body) ->
+      let vars = prog.get_params params_lbl in
+      let (free, (t, u)) = exp_binds body in
+      (remove_vars free vars,
+       (t + List.length vars, u + num_unbound free vars))
+    | ExtCall (f, args_lbl) ->
+      let args = prog.get_args args_lbl in
+      let (free_f, (t_f, u_f)) = exp_binds f in
+      let (frees_args, tus_args) = List.split (List.map exp_binds args) in
+      let (ts_args, us_args) = List.split tus_args in
+      (List.fold_left Util.SS.union free_f frees_args,
+       (sum ts_args + t_f, sum us_args + u_f))
+    | ValInt _ -> base
+    | ValBool _ -> base
+    | Cons (e1, e2) ->
+      let (free_e1, (t_e1, u_e1)) = exp_binds e1 in
+      let (free_e2, (t_e2, u_e2)) = exp_binds e2 in
+      (Util.SS.union free_e1 free_e2, (t_e1 + t_e2, u_e1 + u_e2))
+    | Empty -> base
+    | Match (e1, e2, (x, y, e3)) ->
+      let (free_e1, (t_e1, u_e1)) = exp_binds e1 in
+      let (free_e2, (t_e2, u_e2)) = exp_binds e2 in
+      let (free_e3, (t_e3, u_e3)) = exp_binds e3 in
+      (Util.SS.union free_e1 (Util.SS.union free_e2 (remove_vars free_e3 [x; y])),
+       (t_e1 + t_e2 + t_e3 + 2,
+        u_e1 + u_e2 + u_e3 + num_unbound free_e3 [x; y]))
+    | If (pred, thn, els) ->
+      let (free_pred, (t_pred, u_pred)) = exp_binds pred in
+      let (free_thn, (t_thn, u_thn)) = exp_binds thn in
+      let (free_els, (t_els, u_els)) = exp_binds els in
+      (Util.SS.union free_pred (Util.SS.union free_thn free_els),
+       (t_pred + t_thn + t_els, u_pred + u_thn + u_els))
+    | Custom _ -> base
+    in
+  snd (exp_binds prog.head)
