@@ -473,6 +473,11 @@ let count_binds (prog : program) =
   exp_binds prog.head
 *)
 
+let count_let = false
+let count_lambda = false
+let count_ext_lambda = false
+let count_match = true
+
 let count_binds (prog : program) =
   let sum = List.fold_left (+) 0 in
   let base = (Util.SS.empty, (0, 0)) in
@@ -488,12 +493,13 @@ let count_binds (prog : program) =
       let (free_rhs, (t_rhs, u_rhs)) = exp_binds rhs in
       let (free_body, (t_body, u_body)) = exp_binds body in
       (Util.SS.union free_rhs (remove_vars free_body [x]),
-       (1 + t_rhs + t_body,
-        u_rhs + u_body + num_unbound free_body [x]))
+       (t_rhs + t_body + (if count_let then 1 else 0),
+        u_rhs + u_body + (if count_let then num_unbound free_body [x] else 0)))
     | Lambda (vars, body) ->
       let (free, (t, u)) = exp_binds body in
       (remove_vars free vars,
-       (t + List.length vars, u + num_unbound free vars))
+       (t + (if count_lambda then List.length vars else 0), 
+        u + (if count_lambda then num_unbound free vars else 0)))
     | Call (f, args) ->
       let (free_f, (t_f, u_f)) = exp_binds f in
       let (frees_args, tus_args) = List.split (List.map exp_binds args) in
@@ -504,7 +510,8 @@ let count_binds (prog : program) =
       let vars = prog.get_params params_lbl in
       let (free, (t, u)) = exp_binds body in
       (remove_vars free vars,
-       (t + List.length vars, u + num_unbound free vars))
+       (t + (if count_ext_lambda then List.length vars else 0), 
+        u + (if count_ext_lambda then num_unbound free vars else 0)))
     | ExtCall (f, args_lbl) ->
       let args = prog.get_args args_lbl in
       let (free_f, (t_f, u_f)) = exp_binds f in
@@ -524,8 +531,8 @@ let count_binds (prog : program) =
       let (free_e2, (t_e2, u_e2)) = exp_binds e2 in
       let (free_e3, (t_e3, u_e3)) = exp_binds e3 in
       (Util.SS.union free_e1 (Util.SS.union free_e2 (remove_vars free_e3 [x; y])),
-       (t_e1 + t_e2 + t_e3 + 2,
-        u_e1 + u_e2 + u_e3 + num_unbound free_e3 [x; y]))
+       (t_e1 + t_e2 + t_e3 + (if count_match then 2 else 0),
+        u_e1 + u_e2 + u_e3 + (if count_match then num_unbound free_e3 [x; y] else 0)))
     | If (pred, thn, els) ->
       let (free_pred, (t_pred, u_pred)) = exp_binds pred in
       let (free_thn, (t_thn, u_thn)) = exp_binds thn in
