@@ -445,40 +445,14 @@ let check prog = (
     ()
   )
 
-(*
-let count_binds (prog : program) =
-  let rec exp_binds (e_lbl : exp_label) =
-    let node = prog.get_exp e_lbl in
-    match node.exp with
-    | Hole -> 0
-    | Var _ -> 0
-    | StdLibRef _ -> 0
-    | Let (_, rhs, body) -> 1 + exp_binds rhs + exp_binds body
-    | Lambda (vars, body) -> List.length vars + exp_binds body
-    | Call (f, args) -> List.fold_left (+) (exp_binds f) (List.map exp_binds args)
-    | ExtLambda (params_lbl, body) ->
-      let vars = prog.get_params params_lbl in
-      List.length vars + exp_binds body
-    | ExtCall (f, args_lbl) ->
-      let args = prog.get_args args_lbl in
-      List.fold_left (+) (exp_binds f) (List.map exp_binds args)
-    | ValInt _ -> 0
-    | ValBool _ -> 0
-    | Cons (e1, e2) -> exp_binds e1 + exp_binds e2
-    | Empty -> 0
-    | Match (e1, e2, (_, _, e3)) -> 2 + exp_binds e1 + exp_binds e2 + exp_binds e3
-    | If (pred, thn, els) -> exp_binds pred + exp_binds thn + exp_binds els
-    | Custom _ -> 0
-    in
-  exp_binds prog.head
-*)
+type count_flags = bool * bool * bool * bool
 
-let count_let = false
-let count_lambda = false
-let count_ext_lambda = false
-let count_match = true
+let flag_count_lambda = (false, true, false, false)
+let flag_count_ext_lambda = (false, false, true, false)
+let flag_count_let = (true, false, false, false)
 
-let count_binds (prog : program) =
+let count_binds (flags : count_flags) (prog : program) =
+  let (count_let, count_lambda, count_ext_lambda, count_match) = flags in
   let sum = List.fold_left (+) 0 in
   let base = (Util.SS.empty, (0, 0)) in
   let num_unbound free = List.fold_left (fun n x -> if Util.SS.mem (Var.to_string x) free then n else n + 1) 0 in

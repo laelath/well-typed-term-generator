@@ -156,8 +156,12 @@ let generate_batch (generate : (string * Type.flat_ty) list -> int -> Exp.progra
   in
   let progs = gen_batch batch [] in
   Debug.run(fun () ->
-              let (ts, us) = List.split (List.map Exp.count_binds progs) in
-              Printf.eprintf "Total: %i, Unused: %i\n" (List.fold_left (+) 0 ts) (List.fold_left (+) 0 us));
+              let (ts, us) = List.split (List.map (Exp.count_binds Exp.flag_count_lambda) progs) in
+              Printf.eprintf "Lambdas: Total: %i, Unused: %i\n" (List.fold_left (+) 0 ts) (List.fold_left (+) 0 us);
+              let (ts, us) = List.split (List.map (Exp.count_binds Exp.flag_count_ext_lambda) progs) in
+              Printf.eprintf "Ext. Lambdas: Total: %i, Unused: %i\n" (List.fold_left (+) 0 ts) (List.fold_left (+) 0 us);
+              let (ts, us) = List.split (List.map (Exp.count_binds Exp.flag_count_let) progs) in
+              Printf.eprintf "Lets: Total: %i, Unused: %i\n" (List.fold_left (+) 0 ts) (List.fold_left (+) 0 us));
   progs
 
 let generate_file ?(sep = "====") fs handler prelude tyann code =
