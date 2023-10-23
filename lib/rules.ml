@@ -110,10 +110,10 @@ let ext_function_call_step (prog : Exp.program) (hole : hole_info)  =
  *)
 let palka_rule_step (prog : Exp.program) (hole : hole_info) (f, f_ty) =
   fun () ->
-  Debug.run (fun () -> Printf.eprintf ("creating palka function call\n"));
-  let fe = prog.new_exp {exp=Exp.Var f; ty=f_ty; prev=Some hole.label} in
   match (prog.ty.get_ty f_ty) with
   | Type.TyArrowExt (ty_params, _) ->
+     Debug.run (fun () -> Printf.eprintf ("creating palka ext. function call\n"));
+     let fe = prog.new_exp {exp=Exp.Var f; ty=f_ty; prev=Some hole.label} in
      let extvar = prog.ty.ty_params_extvar ty_params in
      let args = prog.new_args extvar hole.label in
      let holes = List.map (fun arg_ty ->
@@ -124,6 +124,8 @@ let palka_rule_step (prog : Exp.program) (hole : hole_info) (f, f_ty) =
      prog.set_exp hole.label {exp=Exp.ExtCall (fe, args); ty=hole.ty_label; prev=hole.prev};
      holes
   | Type.TyArrow (tys, _) ->
+     Debug.run (fun () -> Printf.eprintf ("creating palka function call\n"));
+     let fe = prog.new_exp {exp=Exp.Var f; ty=f_ty; prev=Some hole.label} in
      let holes = List.map (fun arg_ty -> prog.new_exp {exp=Exp.Hole; ty=arg_ty; prev=Some hole.label}) tys in
      prog.set_exp hole.label {exp=Exp.Call (fe, holes); ty=hole.ty_label; prev=hole.prev};
      holes
