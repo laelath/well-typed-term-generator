@@ -161,9 +161,14 @@ let rec is_same_ty ty_registry tyl1 tyl2 =
   else match (ty_registry.get_ty tyl1, ty_registry.get_ty tyl2) with
        | (TyBool, TyBool) -> true
        | (TyInt, TyInt) -> true
+       | (TyList tyl1', TyList tyl2') -> is_same_ty ty_registry tyl1' tyl2'
        | (TyArrowExt (params1, tyb1), TyArrowExt (params2, tyb2)) ->
          (ty_registry.ty_params_extvar params1 == ty_registry.ty_params_extvar params2)
          && List.for_all2 (is_same_ty ty_registry) (ty_registry.get_ty_params params1) (ty_registry.get_ty_params params2)
+         && is_same_ty ty_registry tyb1 tyb2
+       | (TyArrow (tyls1, tyb1), TyArrow (tyls2, tyb2)) ->
+         List.length tyls1 = List.length tyls2
+         && List.for_all2 (is_same_ty ty_registry) tyls1 tyls2
          && is_same_ty ty_registry tyb1 tyb2
        | (_, _) -> false
 
