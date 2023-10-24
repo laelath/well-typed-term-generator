@@ -156,12 +156,21 @@ let generate_batch (generate : (string * Type.flat_ty) list -> int -> Exp.progra
   in
   let progs = gen_batch batch [] in
   Debug.run(fun () ->
-              let (ts, us) = List.split (List.map (Exp.count_binds Exp.flag_count_lambda) progs) in
-              Printf.eprintf "Lambdas: Total: %i, Unused: %i\n" (List.fold_left (+) 0 ts) (List.fold_left (+) 0 us);
-              let (ts, us) = List.split (List.map (Exp.count_binds Exp.flag_count_ext_lambda) progs) in
-              Printf.eprintf "Ext. Lambdas: Total: %i, Unused: %i\n" (List.fold_left (+) 0 ts) (List.fold_left (+) 0 us);
-              let (ts, us) = List.split (List.map (Exp.count_binds Exp.flag_count_let) progs) in
-              Printf.eprintf "Lets: Total: %i, Unused: %i\n" (List.fold_left (+) 0 ts) (List.fold_left (+) 0 us));
+              let sum = List.fold_left (+) 0 in
+              let count_sums flags =
+                let (ts, us) = List.split (List.map (Exp.count_binds flags) progs) in
+                (sum ts, sum us) in
+              let pct_used u t = 100. *. (1. -. (Int.to_float u /. Int.to_float t)) in
+              let report name u t = Printf.eprintf "%-15stotal: %i,\tn_unused: %i,\t%.1f%% used\n" (name ^ ":") u t (pct_used t u) in
+
+              let (t_lams, u_lams) = count_sums Exp.flag_count_lambda in
+              report "Lambdas" t_lams u_lams;
+              let (t_elams, u_elams) = count_sums Exp.flag_count_ext_lambda in
+              report "Ext. Lambdas" t_elams u_elams;
+              let (t_lets, u_lets) = count_sums Exp.flag_count_let in
+              report "Lets" t_lets u_lets;
+              report "Com. Lambdas" (t_lams + t_elams) (u_lams + u_elams);
+              report "Totals" (t_lams + t_elams + t_lets) (u_lams + u_elams + u_lets));
   progs
 
 let generate_file ?(sep = "====") fs handler prelude tyann code =
