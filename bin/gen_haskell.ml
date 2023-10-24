@@ -265,6 +265,7 @@ let speclist =
     ("-seed", Arg.Set_int seed, "Random generator seed");
     ("-type", Arg.Set_string gen_type, "Generator type (\"" ^ gen_type_palka ^ "\" or \"" ^ gen_type_not_useless ^ "\")");
     ("-testtype", Arg.Set_int testtype, "Test type (\"" ^ "0 or 1 or 2 or 3" ^ "\")");
+    ("-debug", Arg.Set Debug.debug_mode, "Enable debug mode");
   ]
 
 let () =
