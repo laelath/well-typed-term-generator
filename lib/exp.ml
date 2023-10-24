@@ -289,6 +289,7 @@ let consistency_check prog =
 
 exception TypeCheckError of string
 
+(* TODO: FIXME: doesn't work properly with ty vars *)
 (* type check *)
 let type_check (prog : program) =
   (* TODO: better errors *)
@@ -304,7 +305,7 @@ let type_check (prog : program) =
     else raise (TypeCheckError "Type mismatch") in
 
   let ensure_ty_compat ty tyl =
-    match Type.ty_compat_ty_label prog.ty ty tyl [] with
+    match Type.ty_compat_ty_label prog.ty ty tyl with
     | None -> print_string (Type.string_of prog.ty tyl);
               print_newline ();
               raise (TypeCheckError "Invalid stdlib reference")

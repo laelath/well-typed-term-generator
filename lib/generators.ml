@@ -49,8 +49,7 @@ let find_vars (prog : Exp.program) (e : Exp.exp_label) =
 let find_enclosing_lambdas (prog : Exp.program) (e : Exp.exp_label) : (Exp.params_label list) =
   let rec find_ext_vars ty =
     match prog.ty.get_ty ty with
-    | TyBool -> Type.ExtVar.Set.empty
-    | TyInt -> Type.ExtVar.Set.empty
+    | TyBool | TyInt | TyVar _ -> Type.ExtVar.Set.empty
     | TyList ty' -> find_ext_vars ty'
     | TyArrow (params, ty') ->
       List.fold_left
@@ -110,7 +109,7 @@ let type_size_flat_palka =
 let type_size_lbl_palka (prog : Exp.program) =
   let rec lp tyl =
     match prog.ty.get_ty tyl with
-    | TyBool | TyInt -> 1
+    | TyBool | TyInt | TyVar _ -> 1
     | TyList tyl' -> 2 + lp tyl'
     | TyArrow (params, res) -> List.fold_left (+) (3 * List.length params + lp res) (List.map lp params)
     | TyArrowExt (params, res) ->
@@ -126,7 +125,7 @@ let type_size_palka (prog : Exp.program) t =
 let is_mono_type (t : (Type.flat_ty, Type.ty_label) Either.t) =
   match t with
   | Either.Right _ -> true
-  | Either.Left fty -> Util.SS.is_empty (Type.ty_vars fty)
+  | Either.Left fty -> Util.SS.is_empty (Type.flat_ty_vars fty)
 
 (* NOTE: using the fact that all the tys in tyls are monomorphic *)
 (* Uses all the types in the standard library by default,
@@ -143,7 +142,7 @@ let random_type_palka_helper (prog : Exp.program) (n0 : int) (tyls : Type.ty_lab
     | Either.Left fty ->
       (* If it's a flat ty we need to instantiate all the type variables *)
       fun () ->
-        let tvars = Util.SS.elements (Type.ty_vars fty) in
+        let tvars = Util.SS.elements (Type.flat_ty_vars fty) in
         let ty_choices = List.filter (fun x -> type_size_palka prog x < m * 2 + 4) mono_types in
         let ty_args = List.init (List.length tvars)
                                 (fun _ -> match (Choose.choose ty_choices) with
@@ -176,7 +175,7 @@ let find_std_lib_refs (prog : Exp.program) tyl filter =
   List.filter_map
     (fun (x, ty) ->
        if filter (x, ty)
-       then Option.map (fun _ -> x) (Type.ty_compat_ty_label prog.ty ty tyl [])
+       then Option.map (fun (_, mp) -> (x, mp)) (Type.ty_compat_ty_label prog.ty ty tyl)
        else None)
     prog.std_lib
 
@@ -185,9 +184,9 @@ let find_std_lib_funcs (prog : Exp.program) tyl filter =
   List.filter_map
     (fun (x, ty) ->
        if filter (x, ty)
-       then  match ty with
+       then match ty with
             | Type.FlatTyArrow (tys, ty') ->
-              (match Type.ty_compat_ty_label prog.ty ty' tyl [] with
+              (match Type.ty_compat_ty_label prog.ty ty' tyl with
                | None -> None
                | Some mp -> Some (x, ty, tys, mp))
             | _ -> None
@@ -256,12 +255,20 @@ let var_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
   steps_generator prog hole acc
                   Rules.var_step weight ref_vars
 
+let resolve_ty_var_steps weight (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
+  let var_vars = List.filter_map
+                   (fun b -> match prog.ty.get_ty (snd b) with
+                             | Type.TyVar a when not (Type.contains_ty_var prog.ty a hole.ty_label) -> Some (fst b, a)
+                             | _ -> None) hole.vars in
+  steps_generator prog hole acc
+                  Rules.resolve_ty_var_step weight var_vars
+
 
 let std_lib_steps multiplier weight (prog : Exp.program) (hole : hole_info) (acc : rule_urn) =
   let valid_refs = find_std_lib_refs prog hole.ty_label (fun _ -> true) in
   (* TODO: FIXME: GROSS: HACK: *)
   (* BEN: Less gross? do we want to handle the std lib palka this rule symmetrically? *)
-  let weight' hi x = (weight hi x) *. (multiplier x) in
+  let weight' hi (x, _) = (weight hi x) *. (multiplier x) in
   steps_generator prog hole acc
                   Rules.std_lib_step weight' valid_refs
 
@@ -340,14 +347,15 @@ let main : (string -> float) -> t =
   fun std_lib_m ->
   [
     var_steps                       ( w_const 2.        );
+    resolve_ty_var_steps            ( w_const 2.        );
     std_lib_steps std_lib_m         ( w_const 1.        );
     lambda_steps                    ( w_fuel_base 2. 1. );
     ext_lambda_steps                ( w_fuel_base 4. 1. );
-    not_useless_steps               ( w_fuel_base 2. 1. );
+    not_useless_steps               ( w_fuel_base 4. 1. );
     let_insertion_steps             ( w_fuel_depth      );
     palka_rule_steps                ( w_fuel 2.         );
     std_lib_palka_rule_steps        ( w_fuel 2.         );
-    s Rules.ext_function_call_step  ( w_fuel 1.         );
+    s Rules.ext_function_call_step  ( w_fuel 4.         );
     palka_seq_steps                 ( w_fuel 1.         );
   ]
 
@@ -392,6 +400,7 @@ let main : t =
   ]
 *)
 
+(*
 let palka_fuel_approx (hole : hole_info) =
   hole.fuel / (hole.depth + 1)
 
@@ -469,7 +478,7 @@ let poly_palka_func_steps weight (prog : Exp.program) (hole : hole_info) (acc : 
     let valid_refs = find_std_lib_funcs prog hole.ty_label (fun ty -> not (is_mono_type (Either.Left (snd ty)))) in
     (* TODO: calling ty_vars twice - once here once in filter *)
     let valid_refs = List.filter_map (fun (x, ty, tys, mp) ->
-                         let vars = Util.SS.elements (Type.ty_vars ty) in
+                         let vars = Util.SS.elements (Type.flat_ty_vars ty) in
                          let vars = List.filter (fun ty_var -> List.assoc_opt ty_var mp = None) vars in
                          if vars = []
                          then Some (x, ty, tys, mp)
@@ -496,7 +505,7 @@ let poly_palka_func_steps_random weight (prog : Exp.program) (hole : hole_info) 
     let valid_refs = find_std_lib_funcs prog hole.ty_label filter in
     (* TODO: calling ty_vars twice - once here once in filter *)
     let valid_refs = List.filter_map (fun (x, ty, tys, mp) ->
-                         let vars = Util.SS.elements (Type.ty_vars (Type.FlatTyArrow (tys, ty))) in
+                         let vars = Util.SS.elements (Type.flat_ty_vars (Type.FlatTyArrow (tys, ty))) in
                          let vars = List.filter (fun ty_var -> List.assoc_opt ty_var mp = None) vars in
                          if vars = []
                          then None
@@ -523,7 +532,7 @@ let not_palka_base weight (prog : Exp.program) (hole : hole_info) =
  (* palkaTypeSize hole.ty_label > hole.fuel + 15 *)
   then 0
   else weight prog hole
-
+*)
 (*
 let palka : t =
   [

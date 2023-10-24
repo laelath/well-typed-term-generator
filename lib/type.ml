@@ -4,10 +4,8 @@
  *)
 
 (* type variables for polymorphism *)
-(* We don't need these for now
 module TyVar = Key.Make (struct let x="a" end)
 type ty_var = TyVar.t
- *)
 
 (* type labels *)
 module TypeLabel = Key.Make (struct let x="ty" end)
@@ -31,7 +29,7 @@ type ty = (* TyArrow of ty_label list * ty_label *)
   | TyList of ty_label
   | TyArrow of (ty_label list) * ty_label
   | TyArrowExt of ty_params_label * ty_label
-  (* | TyVar of ty_var *)
+  | TyVar of ty_var
 (*type ty_node = {ty : ty}*)
 
 (* type tree datatype *)
@@ -41,6 +39,13 @@ type flat_ty =
   | FlatTyList of flat_ty
   | FlatTyArrow of (flat_ty list) * flat_ty
   | FlatTyVar of string
+
+let rec flat_ty_vars (t : flat_ty) =
+  match t with
+  | FlatTyVar x -> Util.SS.singleton x
+  | FlatTyBool | FlatTyInt -> Util.SS.empty
+  | FlatTyList t' -> flat_ty_vars t'
+  | FlatTyArrow (ts, t') -> List.fold_left Util.SS.union (flat_ty_vars t') (List.map flat_ty_vars ts)
 
 
 type registry = {
@@ -52,6 +57,11 @@ type registry = {
     (* type operations *)
     new_ty : ty -> ty_label;
     get_ty : ty_label -> ty;
+
+    (* unresolved polymorphic variable operations *)
+    new_ty_var : unit -> ty_var;
+    get_ty_var : ty_var -> ty_label list;
+    set_ty_var : ty_var -> ty -> unit;
 
     (* extension variable operations *)
     new_extvar : unit -> extvar;
@@ -82,24 +92,17 @@ let consistency_check ty_registry ty0 =
       if not (List.mem ty_params (ty_registry.extvar_ty_params extvar))
       then raise (Util.ConsistencyError "ty_params label not in extvar list")
       else List.iter consistency_check_ty (ty_registry.get_ty_params ty_params);
-           consistency_check_ty ty_im in
+           consistency_check_ty ty_im
+    | TyVar a ->
+      if not (List.mem ty (ty_registry.get_ty_var a))
+      then raise (Util.ConsistencyError "ty_var label not in ty_var list")
+      else () in
   consistency_check_ty ty0
 
 
-exception BadTypeError of string
-let flat_ty_to_ty new_ty =
-  let rec lp ty =
-    let ty' = match ty with
-      | FlatTyVar _ -> raise (BadTypeError "Cannot generate polymorphic types")
-      | FlatTyInt -> TyInt
-      | FlatTyBool -> TyBool
-      | FlatTyList ty'' -> TyList (lp ty'')
-      | FlatTyArrow (params, res) -> TyArrow (List.rev_map lp params, lp res) in
-    new_ty ty'
-  in lp
-
 let make () (*?(std_lib = [])*) =
   let ty_tbl : ty TypeLabel.Tbl.t = TypeLabel.Tbl.create 100 in
+  let ty_var_tbl : (ty_label list) TyVar.Tbl.t = TyVar.Tbl.create 100 in
   let ty_params_tbl : (ty_label list) TyParamsLabel.Tbl.t = TyParamsLabel.Tbl.create 100 in
   let extvar_ty_params_tbl : (ty_params_label list) ExtVar.Tbl.t = ExtVar.Tbl.create 100 in
   let ty_params_extvar_tbl : extvar TyParamsLabel.Tbl.t = TyParamsLabel.Tbl.create 100 in
@@ -108,6 +111,24 @@ let make () (*?(std_lib = [])*) =
     let extvar = ExtVar.make () in
     ExtVar.Tbl.add extvar_ty_params_tbl extvar [];
     extvar in
+
+  let new_ty_var () =
+    let tyvar = TyVar.make () in
+    TyVar.Tbl.add ty_var_tbl tyvar [];
+    tyvar in
+
+  let get_ty_var a = TyVar.Tbl.find ty_var_tbl a in
+  let add_ty_var_ref a lbl = TyVar.Tbl.replace ty_var_tbl a (lbl :: get_ty_var a) in
+
+  let set_ty_var a ty =
+    List.iter (fun tyl ->
+                 TypeLabel.Tbl.replace ty_tbl tyl ty;
+                 match ty with
+                 | TyVar b -> add_ty_var_ref b tyl
+                 | _ -> ())
+              (TyVar.Tbl.find ty_var_tbl a);
+    (* type variables can only be set once *)
+    TyVar.Tbl.remove ty_var_tbl a in
 
   let new_ty =
     let bool_lab = TypeLabel.make () in
@@ -120,6 +141,9 @@ let make () (*?(std_lib = [])*) =
       | TyInt -> int_lab
       | _ ->
         let lab = TypeLabel.make () in
+        (match ty' with
+         | TyVar a -> add_ty_var_ref a lab
+         | _ -> ());
         TypeLabel.Tbl.add ty_tbl lab ty';
         lab in
   let get_ty lab = TypeLabel.Tbl.find ty_tbl lab in
@@ -139,10 +163,26 @@ let make () (*?(std_lib = [])*) =
   let extvar_ty_params extvar = ExtVar.Tbl.find extvar_ty_params_tbl extvar in
   let ty_params_extvar lab = TyParamsLabel.Tbl.find ty_params_extvar_tbl lab in
 
+  let flat_ty_to_ty ty =
+    let vars = Util.SM.of_seq (Seq.map (fun a -> (a, new_ty_var ())) (Util.SS.to_seq (flat_ty_vars ty))) in
+    let rec lp ty =
+      let ty' = match ty with
+        | FlatTyVar a -> TyVar (Util.SM.find a vars)
+        | FlatTyInt -> TyInt
+        | FlatTyBool -> TyBool
+        | FlatTyList ty'' -> TyList (lp ty'')
+        | FlatTyArrow (params, res) -> TyArrow (List.rev_map lp params, lp res) in
+      new_ty ty'
+    in lp ty in
+
   {
     new_extvar = new_extvar;
     new_ty = new_ty;
     get_ty = get_ty;
+
+    new_ty_var = new_ty_var;
+    get_ty_var = get_ty_var;
+    set_ty_var = set_ty_var;
 
     new_ty_params = new_ty_params;
     get_ty_params = get_ty_params;
@@ -151,10 +191,22 @@ let make () (*?(std_lib = [])*) =
     extvar_ty_params = extvar_ty_params;
     ty_params_extvar = ty_params_extvar;
 
-    flat_ty_to_ty = flat_ty_to_ty new_ty;
+    flat_ty_to_ty = flat_ty_to_ty;
   }
 
 
+let rec contains_ty_var ty_registry a tyl =
+  match ty_registry.get_ty tyl with
+  | TyVar b -> TyVar.equal a b
+  | TyBool | TyInt -> false
+  | TyList tyl' -> contains_ty_var ty_registry a tyl'
+  | TyArrow (tys, tyb) ->
+    contains_ty_var ty_registry a tyb || List.exists (contains_ty_var ty_registry a) tys
+  | TyArrowExt (params, tyb) ->
+    contains_ty_var ty_registry a tyb ||
+    List.exists (contains_ty_var ty_registry a) (ty_registry.get_ty_params params)
+
+(* TODO: same ty modulo type variable resolution *)
 let rec is_same_ty ty_registry tyl1 tyl2 =
   if TypeLabel.equal tyl1 tyl2
   then true
@@ -170,6 +222,7 @@ let rec is_same_ty ty_registry tyl1 tyl2 =
          List.length tyls1 = List.length tyls2
          && List.for_all2 (is_same_ty ty_registry) tyls1 tyls2
          && is_same_ty ty_registry tyb1 tyb2
+       | (TyVar a, TyVar b) -> TyVar.equal a b
        | (_, _) -> false
 
 let is_func_producing ty_registry tyl tylf =
@@ -179,27 +232,36 @@ let is_func_producing ty_registry tyl tylf =
   | _ -> false
 
 (* FIXME: why does this use an assoc list?? *)
-let rec ty_compat_ty_label (ty_registry : registry) (ty : flat_ty) (tyl : ty_label) acc =
-  let check b = if b then Some acc else None in
+let ty_compat_ty_label (ty_registry : registry) =
+  let rec compat_lp acc1 acc2 (ty : flat_ty) (tyl : ty_label) =
+    let check b = if b then Some (acc1, acc2) else None in
 
-  match ty, ty_registry.get_ty tyl with
-  | FlatTyVar name, _ ->
-    (match List.assoc_opt name acc with
-     | None -> Some ((name, tyl) :: acc)
-     | Some tyl' -> check (is_same_ty ty_registry tyl tyl'))
-  | FlatTyInt, TyInt -> Some acc
-  | FlatTyBool, TyBool -> Some acc
-  | FlatTyList ty', TyList tyl' ->
-    ty_compat_ty_label ty_registry ty' tyl' acc
-  | FlatTyArrow (tys, ty'), TyArrow (tyls, tyl') ->
-    if List.length tys == List.length tyls
-    then List.fold_left2
-           (fun acc ty tyl ->
-              Option.bind acc (ty_compat_ty_label ty_registry ty tyl))
-           (ty_compat_ty_label ty_registry ty' tyl' acc)
-           (List.rev tys) tyls
-    else None
-  | _ -> None
+    match ty, ty_registry.get_ty tyl with
+    | FlatTyVar name, _ ->
+      (match List.assoc_opt name acc1 with
+       | None -> Some ((name, tyl) :: acc1, acc2)
+       | Some tyl' -> check (is_same_ty ty_registry tyl tyl'))
+    | _, TyVar a ->
+      (* TODO: deal with this massive headache of a problem of full type variable resolution *)
+      if Util.SS.is_empty (flat_ty_vars ty)
+      then match List.assoc_opt a acc2 with
+           | None -> Some (acc1, (a, ty) :: acc2)
+           | Some ty' -> check (ty = ty')
+      else None
+    | FlatTyInt, TyInt -> Some (acc1, acc2)
+    | FlatTyBool, TyBool -> Some (acc1, acc2)
+    | FlatTyList ty', TyList tyl' ->
+      compat_lp acc1 acc2 ty' tyl'
+    | FlatTyArrow (tys, ty'), TyArrow (tyls, tyl') ->
+      if List.length tys == List.length tyls
+      then List.fold_left2
+             (fun acc ty tyl ->
+                Option.bind acc (fun acc -> compat_lp (fst acc) (snd acc) ty tyl))
+             (compat_lp acc1 acc2 ty' tyl')
+             (List.rev tys) tyls
+      else None
+    | _ -> None in
+  compat_lp [] []
 
 
 let rec string_of ty_registry ty =
@@ -220,12 +282,4 @@ let rec string_of ty_registry ty =
     "(" ^ string_of_params params ^ " -> " ^ string_of ty_registry ty_im ^ ")"
   | TyArrowExt (ty_params, ty_im) ->
     "(" ^ string_of_params (ty_registry.get_ty_params ty_params) ^ " -> " ^ string_of ty_registry ty_im ^ ")"
-
-
-(* FIXME: why convert to a list?? *)
-let rec ty_vars (t : flat_ty) =
-  match t with
-  | FlatTyVar x -> Util.SS.singleton x
-  | FlatTyBool | FlatTyInt -> Util.SS.empty
-  | FlatTyList t' -> ty_vars t'
-  | FlatTyArrow (ts, t') -> List.fold_left Util.SS.union (ty_vars t') (List.map ty_vars ts)
+  | TyVar a -> TyVar.to_string a

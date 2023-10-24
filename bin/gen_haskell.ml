@@ -14,6 +14,8 @@ let haskell_string (prog : Exp.program) =
 
     let ty = prog.ty.get_ty tyl in
     match ty with
+    (* TODO: properly resolve unconstrained ty vars *)
+    | TyVar _ -> "Int"
     | TyInt -> "Int"
     | TyBool -> "Bool"
     | TyList tyl' -> "[" ^ str_ty tyl' ^ "]"

@@ -230,6 +230,13 @@ let var_step (prog : Exp.program) (hole : hole_info) (var, _) =
   prog.set_exp hole.label {exp=Exp.Var var; ty=hole.ty_label; prev=hole.prev};
   []
 
+let resolve_ty_var_step (prog : Exp.program) (hole : hole_info) (var, a) =
+  fun () ->
+  Debug.run (fun () -> Printf.eprintf ("creating var reference resolving ty var\n"));
+  prog.ty.set_ty_var a (prog.ty.get_ty hole.ty_label);
+  prog.set_exp hole.label {exp=Exp.Var var; ty=hole.ty_label; prev=hole.prev};
+  []
+
 
 (* Implements the rule:
    FIXME
@@ -250,8 +257,10 @@ let create_if_step (prog : Exp.program) (hole : hole_info)  =
    FIXME
    E[<>] ~>
  *)
-let std_lib_step (prog : Exp.program) (hole : hole_info) x =
+let std_lib_step (prog : Exp.program) (hole : hole_info) (x, mp) =
   fun () ->
+  (* set all the variables that ty_compat_ty_label required to be resolved *)
+  List.iter (fun (a, ty) -> prog.ty.set_ty_var a (prog.ty.get_ty (prog.ty.flat_ty_to_ty ty))) mp;
   Debug.run (fun () -> Printf.eprintf ("creating std lib reference: %s\n") x);
   prog.set_exp hole.label {exp=Exp.StdLibRef x; ty=hole.ty_label; prev=hole.prev};
   []
@@ -261,13 +270,17 @@ let std_lib_step (prog : Exp.program) (hole : hole_info) x =
    FIXME
    E[<>] ~>
  *)
-let std_lib_palka_rule_step (prog : Exp.program) (hole : hole_info) (f, ty, tys, mp) =
+let std_lib_palka_rule_step (prog : Exp.program) (hole : hole_info) (f, ty, tys, (mp1, mp2)) =
   fun () ->
   Debug.run (fun () -> Printf.eprintf ("creating std lib palka call: %s\n") f);
-  let vars = List.fold_left Util.SS.union (Type.ty_vars ty) (List.map Type.ty_vars tys) in
-  let unmapped_vars = Util.SS.diff vars (Util.SS.of_list (List.map fst mp)) in
-  let mp' = List.map (fun x -> (x, Old.random_type hole.fuel prog)) (Util.SS.elements unmapped_vars) in
-  let tyls = List.map (ty_label_from_ty prog (mp' @ mp)) (List.rev tys) in
+  let vars = List.fold_left Util.SS.union (Type.flat_ty_vars ty) (List.map Type.flat_ty_vars tys) in
+  let unmapped_vars = Util.SS.diff vars (Util.SS.of_list (List.map fst mp1)) in
+  (* create new type variables for all the unresolved ones *)
+  let mp' = List.map (fun x -> (x, prog.ty.new_ty (Type.TyVar (prog.ty.new_ty_var ())))) (Util.SS.elements unmapped_vars) in
+  let tyls = List.map (ty_label_from_ty prog (mp' @ mp1)) (List.rev tys) in
+  (* the following only works because we ensured that the flat tys have no variables in them *)
+  (* set all the variables that ty_compat_ty_label required to be resolved *)
+  List.iter (fun (a, ty) -> prog.ty.set_ty_var a (prog.ty.get_ty (prog.ty.flat_ty_to_ty ty))) mp2;
   let holes = List.map (fun tyl -> prog.new_exp {exp=Exp.Hole; ty=tyl; prev=Some hole.label}) tyls in
   let func = prog.new_exp {exp=Exp.StdLibRef f; ty=prog.ty.new_ty (Type.TyArrow (tyls, hole.ty_label)); prev=Some hole.label} in
   prog.set_exp hole.label {exp=Exp.Call (func, holes); ty=hole.ty_label; prev=hole.prev};

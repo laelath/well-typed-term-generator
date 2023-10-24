@@ -5,6 +5,7 @@ let rec type_complexity (prog : Exp.program) (ty : Type.ty_label) =
   match prog.ty.get_ty ty with
   | Type.TyBool -> 1
   | Type.TyInt -> 1
+  | Type.TyVar _ -> 1
   | Type.TyList ty' -> 2 + type_complexity prog ty'
   | Type.TyArrow (params, ty') ->
     List.fold_left
