@@ -331,7 +331,7 @@ type t = ((Exp.program -> hole_info -> rule_urn -> rule_urn) list)
 let c (w : float) (_ : hole_info) _ = w
 let w_const n = c n
 let w_fuel_base n m (hole : hole_info) _ = Int.to_float hole.fuel *. n +. m
-let w_fuel_depth (hole : hole_info) _ = Int.to_float (max 0 (hole.fuel - hole.depth))
+let w_fuel_depth n (hole : hole_info) _ = n *. Int.to_float hole.fuel /. Int.to_float (hole.depth + 1)
 
 let w_fuel n = w_fuel_base n 0.
 
@@ -352,7 +352,7 @@ let main : (string -> float) -> t =
     lambda_steps                    ( w_fuel_base 2. 1. );
     ext_lambda_steps                ( w_fuel_base 4. 1. );
     not_useless_steps               ( w_fuel_base 4. 1. );
-    let_insertion_steps             ( w_fuel_depth      );
+    let_insertion_steps             ( w_fuel_depth 1.   );
     palka_rule_steps                ( w_fuel 2.         );
     std_lib_palka_rule_steps        ( w_fuel 2.         );
     s Rules.ext_function_call_step  ( w_fuel 4.         );
@@ -367,7 +367,7 @@ let main_no_seq : (string -> float) -> t =
     lambda_steps                    ( w_fuel_base 2. 1. );
     ext_lambda_steps                ( w_fuel_base 4. 1. );
     not_useless_steps               ( w_fuel_base 2. 1. );
-    let_insertion_steps             ( w_fuel_depth      );
+    let_insertion_steps             ( w_fuel_depth 1.   );
     palka_rule_steps                ( w_fuel 2.         );
     std_lib_palka_rule_steps        ( w_fuel 2.         );
     s Rules.ext_function_call_step  ( w_fuel 1.         );

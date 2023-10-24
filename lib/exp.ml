@@ -323,6 +323,7 @@ let type_check (prog : program) =
        | _ -> raise (TypeCheckError "number of function call args differs from type")) in
 
     let node = prog.get_exp e in
+    Type.consistency_check prog.ty node.ty;
     match node.exp with
     | Hole -> node.ty
     | Var var ->

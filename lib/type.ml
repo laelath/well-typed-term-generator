@@ -281,5 +281,7 @@ let rec string_of ty_registry ty =
   | TyArrow (params, ty_im) ->
     "(" ^ string_of_params params ^ " -> " ^ string_of ty_registry ty_im ^ ")"
   | TyArrowExt (ty_params, ty_im) ->
-    "(" ^ string_of_params (ty_registry.get_ty_params ty_params) ^ " -> " ^ string_of ty_registry ty_im ^ ")"
+    "(" ^ string_of_params (ty_registry.get_ty_params ty_params) ^
+    " -[" ^ ExtVar.to_string (ty_registry.ty_params_extvar ty_params) ^
+    "]> " ^ string_of ty_registry ty_im ^ ")"
   | TyVar a -> TyVar.to_string a

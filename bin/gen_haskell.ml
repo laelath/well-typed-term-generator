@@ -73,11 +73,13 @@ let haskell_string (prog : Exp.program) =
       ^ " = " ^ str_exp rhs
       ^ " in " ^ str_exp body ^ ")"
     | Lambda (params, body) ->
-      "((" ^ str_params params ^ str_exp body ^ ")::" ^ str_ty node.ty ^ ")"
+      (*"((" ^ str_params params ^ str_exp body ^ ")::" ^ str_ty node.ty ^ ")"*)
+      "(" ^ str_params params ^ str_exp body ^ ")"
     | Call (func, args) ->
       "(" ^ str_exp func ^ str_args args ^ ")"
     | ExtLambda (params, body) ->
-      "((" ^ str_params (prog.get_params params) ^ str_exp body ^ ")::" ^ str_ty node.ty ^ ")"
+      (*"((" ^ str_params (prog.get_params params) ^ str_exp body ^ ")::" ^ str_ty node.ty ^ ")"*)
+      "(" ^ str_params (prog.get_params params) ^ str_exp body ^ ")"
     | ExtCall (func, args) ->
       "(" ^ str_exp func ^ str_args (prog.get_args args) ^ ")"
     | If (pred, thn, els) ->
