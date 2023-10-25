@@ -351,11 +351,11 @@ let main : (string -> float) -> t =
     std_lib_steps std_lib_m         ( w_const 1.        );
     lambda_steps                    ( w_fuel_base 2. 1. );
     ext_lambda_steps                ( w_fuel_base 4. 1. );
-    not_useless_steps               ( w_fuel_base 4. 1. );
+    not_useless_steps               ( w_fuel_base 2. 1. );
     let_insertion_steps             ( w_fuel_depth 1.   );
     palka_rule_steps                ( w_fuel 2.         );
     std_lib_palka_rule_steps        ( w_fuel 2.         );
-    s Rules.ext_function_call_step  ( w_fuel 4.         );
+    s Rules.ext_function_call_step  ( w_fuel 2.         );
     palka_seq_steps                 ( w_fuel 1.         );
   ]
 
