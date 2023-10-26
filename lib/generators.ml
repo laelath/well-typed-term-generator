@@ -355,8 +355,8 @@ let main : (string -> float) -> t =
     let_insertion_steps             ( w_fuel_depth 1.   );
     palka_rule_steps                ( w_fuel 2.         );
     std_lib_palka_rule_steps        ( w_fuel 2.         );
-    (* s Rules.ext_function_call_step  ( w_fuel 1.         );*)
-    s Rules.function_call_step      ( w_fuel 1.         );
+    s Rules.ext_function_call_step  ( w_fuel 1.         );
+    (* s Rules.function_call_step      ( w_fuel 1.         );*)
     palka_seq_steps                 ( w_fuel 1.         );
   ]
 
