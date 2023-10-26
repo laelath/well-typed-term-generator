@@ -103,6 +103,21 @@ let ext_function_call_step (prog : Exp.program) (hole : hole_info)  =
   prog.set_exp hole.label {exp=Exp.ExtCall (f, args); ty=hole.ty_label; prev=hole.prev};
   [f]
 
+let function_call_step (prog : Exp.program) (hole : hole_info) =
+  fun () ->
+  Debug.run (fun () -> Printf.eprintf ("creating function call\n"));
+  let n = Int.of_float (sqrt (Float.of_int (Random.int hole.fuel))) + 1 in
+  let tys = List.init n (fun _ -> Old.random_type (hole.fuel / n) prog) in
+  let func = prog.new_exp {exp=Exp.Hole;
+                           ty=prog.ty.new_ty (TyArrow (tys, hole.ty_label));
+                           prev=Some hole.label} in
+  let args = List.map (fun ty -> prog.new_exp {exp=Exp.Hole;
+                                               ty=ty;
+                                               prev=Some hole.label}) tys in
+  let holes = [func] @ args in
+  prog.set_exp hole.label {exp=Exp.Call (func, args); ty=hole.ty_label; prev=hole.prev};
+  holes
+
 
 
 (* Implements the rule:
