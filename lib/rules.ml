@@ -103,11 +103,16 @@ let ext_function_call_step (prog : Exp.program) (hole : hole_info)  =
   prog.set_exp hole.label {exp=Exp.ExtCall (f, args); ty=hole.ty_label; prev=hole.prev};
   [f]
 
+let rec sample_num_args acc =
+  if Random.float 1. *. Float.of_int acc > 1. /. 2.
+  then acc
+  else sample_num_args (acc + 1)
+
 let function_call_step (prog : Exp.program) (hole : hole_info) =
   fun () ->
   Debug.run (fun () -> Printf.eprintf ("creating function call\n"));
-  let n = Int.of_float (sqrt (Float.of_int (Random.int hole.fuel))) + 1 in
-  let tys = List.init n (fun _ -> Old.random_type (hole.fuel / n) prog) in
+  let n = sample_num_args 0 in
+  let tys = List.init n (fun _ -> prog.ty.new_ty (Type.TyVar (prog.ty.new_ty_var ()))) in
   let func = prog.new_exp {exp=Exp.Hole;
                            ty=prog.ty.new_ty (TyArrow (tys, hole.ty_label));
                            prev=Some hole.label} in
