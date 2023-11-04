@@ -1,3 +1,4 @@
 (library
  (public_name not_useless)
- (wrapped false))
+ (wrapped false)
+ (libraries unionFind))

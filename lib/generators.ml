@@ -6,9 +6,7 @@
    -
  *)
 
-(*
-  UTIL
- *)
+(* TODO: HERE
 
 type hole_info = Rules.hole_info
 
@@ -279,3 +277,4 @@ let main : (string -> float) -> t =
   ]
 
 (* TODO: add a temperature that varies weights *)
+*)

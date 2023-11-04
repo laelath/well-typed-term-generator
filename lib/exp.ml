@@ -1,452 +1,345 @@
-(* Each node has a unique label, which cannot be changed.
-   if we have some node (call e1_l1 e2_l2) and we are updating e1 to (let (x rhs) e1),
-   it's tempting to overwrite the l1 label to point to this new node.
-   The problem is that we have update maps `type extension var -> program location set`
-   that point to where syntactic updates need to happen, and we don't want to update these.
+(* push element onto a list ref *)
+let push x l = l := x :: !l
 
-   Each node also has a `prev` pointer, so there's no term sharing
-   allowed; each node has exactly one reference.
+(* TODO: exp -> exp_node and exp = exp_node ref? *)
+
+(* expression and type datatype *)
+type exp_node =
+  | Hole of ty * env
+  | Ref of var
+  | ExtRef of string * ty
+  | Let of var * exp * exp
+  | Lambda of var list * exp
+  | Call of exp * exp list
+  | ExtLambda of extvar * var list ref * exp
+  | ExtCall of exp * extvar * exp list ref
+and exp = exp_node ref
+and ty_node =
+  | TyCons of string * ty list
+  | TyArrow of ty list * ty
+  | TyArrowExt of extvar * ty
+  | TyUnif
+and ty = ty_node UnionFind.elem
+and extvar = {
+  mutable param_tys : ty list;
+  mutable lambdas : var list ref list;
+  mutable calls : (exp list ref * env) list;
+}
+and var = {
+  var_name : string;
+  var_ty : ty;
+  mutable var_refs : exp list;
+}
+and env = (var list, var list ref) Either.t list
+
+(* INVARIANTS:
+ * - the params list in ExtLambda is contained in the its extvar
+ * - the args list in ExtCall is contained in its extvar
+ * - the var_refs field in the var of Ref contains itself
  *)
 
-(* expression labels *)
-module ExpLabel = Key.Make (struct let x="lab" end)
-type exp_label = ExpLabel.t
+let make_ty : ty_node -> ty  = UnionFind.make
 
-(* parameter labels for extensible lambdas *)
-module ParamsLabel = Key.Make (struct let x="param" end)
-type params_label = ParamsLabel.t
+(* technically variables, like extension variables don't need a name
+ * but since creating one would be harder as part of an extractor,
+ * we do it here
+ *)
+let var_counter = ref 0
+let reset_var_counter () = var_counter := 0
+let new_var ty_ref =
+  let x = !var_counter in
+  incr var_counter;
+  { var_name = "x" ^ Int.to_string x;
+    var_ty = ty_ref;
+    var_refs = [];
+  }
 
-(* argument labels for extensible calls *)
-module ArgsLabel = Key.Make (struct let x="arg" end)
-type args_label = ArgsLabel.t
+(* TODO: in debug mode check that ref is real *)
+(* TODO: special function for creating references *)
+let var_register_ref v e =
+  v.var_refs <- e :: v.var_refs
 
-(* variables *)
-module Var = Key.Make (struct let x="x" end)
-type var = Var.t
+(* create a new extension variable *)
+let new_extvar () = {
+    param_tys = [];
+    lambdas = [];
+    calls = [];
+  }
 
-(* expression datatype *)
-type exp =
-  | Hole
-  | Var of var
-  | StdLibRef of string
-  | Let of (var * exp_label * exp_label)
-  | Lambda of ((var list) * exp_label)
-  | Call of (exp_label * (exp_label list))
-  | ExtLambda of (params_label * exp_label)
-  | ExtCall of (exp_label * args_label)
-  | ValInt of int
-  | ValBool of bool
-  | Cons of (exp_label * exp_label)
-  | Empty
-  | Match of (exp_label * exp_label * (var * var * exp_label))
-  | If of (exp_label * exp_label * exp_label)
-  | Custom of string
+(* Implements the rule:
+   E ~> E{alpha + tau}
+ *)
+(* extends the extvar with the given type *)
+(* returns the list of new holes *)
+let extend_extvar ext ty_ref =
+  ext.param_tys <- ty_ref :: ext.param_tys;
+  List.iter (fun params -> push (new_var ty_ref) params) ext.lambdas;
+  List.map (fun (args, env) ->
+              let hole = ref (Hole (ty_ref, env)) in
+              push hole args;
+              hole)
+           ext.calls
+
+(* TODO: check well-formedness on registration *)
+let extvar_register_lambda ext params =
+  ext.lambdas <- params :: ext.lambdas
+
+(* TODO: check well-formedness on registration *)
+let extvar_register_call ext env args =
+  ext.calls <- (env, args) :: ext.calls
+
+(* returns true if if ty' contains ty *)
+(* TODO: less confusing name *)
+let ty_contains_ty ty ty' =
+  let rec lp ty' =
+    UnionFind.eq ty ty' ||
+    match UnionFind.get ty' with
+    | TyCons (_, ty_args) ->
+       List.exists lp ty_args
+    | TyArrow (ty_args, ty_body) ->
+       List.exists lp ty_args || lp ty_body
+    | TyArrowExt (evar, ty_body) ->
+       List.exists lp evar.param_tys || lp ty_body
+    | TyUnif -> false
+  in lp ty'
+
+(* dictionary of zero-arg type constructors *)
+let ty_dict = ref Util.SM.empty
+let ty_of_external_ty (ty_top : External.ty) =
+  let vars_map =
+    Util.sm_of_ss (fun _ -> make_ty TyUnif) (External.ty_vars ty_top) in
+  let rec lp (ty : External.ty) =
+    match ty with
+    | TyCons (name, ty_args) ->
+       (match ty_args with
+        | [] ->
+           (match Util.SM.find_opt name !ty_dict with
+            | Some ty_ref -> ty_ref
+            | None ->
+               let ty_ref = make_ty (TyCons (name, [])) in
+               ty_dict := Util.SM.add name ty_ref !ty_dict;
+               ty_ref)
+        | _ -> make_ty (TyCons (name, List.map lp ty_args)))
+    | TyFun (arg_tys, ty_body) ->
+       make_ty (TyArrow (List.map lp arg_tys, lp ty_body))
+    | TyVar a -> Util.SM.find a vars_map in
+  lp ty_top
+
+exception UnificationError
+
+(* not re-entrant on UnionFind.merge because types aren't recursive *)
+let rec unify ty1 ty2 =
+  let _ = UnionFind.merge
+    (fun ty_node1 ty_node2 ->
+      match ty_node1, ty_node2 with
+      | TyUnif, ty_node2 ->
+         if ty_contains_ty ty1 ty2
+         then raise UnificationError
+         else ty_node2
+      | ty_node1, TyUnif ->
+         if ty_contains_ty ty2 ty1
+         then raise UnificationError
+         else ty_node1
+      | TyCons (n1, tys1), TyCons (n2, tys2) ->
+         if not (n1 = n2 && List.length tys1 = List.length tys2)
+         then raise UnificationError
+         else List.iter2 unify tys1 tys2;
+              ty_node1
+      | TyArrow (ty_args1, ty_body1), TyArrow (ty_args2, ty_body2) ->
+         if List.length ty_args1 <> List.length ty_args2
+         then raise UnificationError
+         else List.iter2 unify ty_args1 ty_args2;
+              unify ty_body1 ty_body2;
+              ty_node1
+      | TyArrowExt (evar1, ty_body1), TyArrowExt (evar2, ty_body2) ->
+         if evar1 != evar2
+         then raise UnificationError
+         else unify ty_body1 ty_body2;
+              ty_node1
+      | _, _ -> raise UnificationError)
+    ty1 ty2 in ()
+
+(* feels kinda wasteful that the mapping is just thrown away,
+   but I suspect that the benefits of fully unifying the types
+   might outweigh it? *)
+let can_unify ty1 ty2 =
+  let rec lp mp ty1 ty2 =
+    if UnionFind.eq ty1 ty2 then mp else
+    match UnionFind.get ty1, UnionFind.get ty2 with
+    | TyUnif, _ ->
+       (match List.assq_opt (UnionFind.find ty1) mp with
+        | Some ty1' -> lp mp ty1' ty2
+        | None ->
+           if ty_contains_ty ty1 ty2
+           then raise UnificationError
+           else (UnionFind.find ty1, ty2) :: mp)
+    | _, TyUnif ->
+       (match List.assq_opt (UnionFind.find ty2) mp with
+        | Some ty2' -> lp mp ty1 ty2'
+        | None ->
+           if ty_contains_ty ty2 ty1
+           then raise UnificationError
+           else (UnionFind.find ty2, ty1) :: mp)
+    | TyCons (n1, tys1), TyCons (n2, tys2) ->
+       if not (n1 = n2 && List.length tys1 = List.length tys2)
+       then raise UnificationError
+       else List.fold_left2 lp mp tys1 tys2
+    | TyArrow (ty_args1, ty_body1), TyArrow (ty_args2, ty_body2) ->
+       if List.length ty_args1 <> List.length ty_args2
+       then raise UnificationError
+       else lp (List.fold_left2 lp mp ty_args1 ty_args2)
+               ty_body1 ty_body2
+    | TyArrowExt (evar1, ty_body1), TyArrowExt (evar2, ty_body2) ->
+       if evar1 != evar2
+       then raise UnificationError
+       else lp mp ty_body1 ty_body2
+    | _, _ -> raise UnificationError
+  in
+  try
+    let _ = lp [] ty1 ty2 in
+    true
+  with
+    UnificationError -> false
+
 (*
-  | Data of {
-      dcon : Data.dcon;
-      args : exp_label list;
-    }
-  | Match of {
-      arg : exp_label;
-      pats : pat list;
-    }
-and pat = {
-    dcon : Data.dcon;
-    params : var list;
-    body : exp_label;
-  }
-*)
-(* | Prim of prim * label list *)
-
-(* expression nodes *)
-type exp_node = {
-    exp : exp;
-    ty : Type.ty_label;
-    prev : exp_label option;
-  }
-
-type program = {
-    (* the head node of the program *)
-    mutable head : exp_label;
-
-    std_lib : (string * Type.flat_ty) list;
-
-    (* variable operations *)
-    new_var : unit -> var;
-    (* extension variable operations *)
-    new_extvar : unit -> Type.extvar;
-
-    ty : Type.registry;
-    (*
-    (* type operations *)
-    new_ty : Type.ty -> Type.ty_label;
-    get_ty : Type.ty_label -> Type.ty;
-     *)
-    (*
-    (* type parameter operations *)
-    new_ty_params : Type.extvar -> Type.ty_params_label;
-    get_ty_params : Type.ty_params_label -> Type.ty_label list;
-    add_ty_param : Type.ty_params_label -> Type.ty_label -> unit;
-    (* all params labels that are associated with the given extvar *)
-    extvar_ty_params : Type.extvar -> Type.ty_params_label list;
-    ty_params_extvar : Type.ty_params_label -> Type.extvar;
-     *)
-
-    (* expression operations *)
-    new_exp : exp_node -> exp_label;
-    get_exp : exp_label -> exp_node;
-    set_exp : exp_label -> exp_node -> unit;
-
-    (* lambda parameter operations *)
-    new_params : Type.extvar -> params_label;
-    get_params : params_label -> var list;
-    add_param : params_label -> var -> unit;
-    (* all params labels that are associated with the given extvar *)
-    extvar_params : Type.extvar -> params_label list;
-    params_extvar : params_label -> Type.extvar;
-
-    (* arguments operations *)
-    new_args : Type.extvar -> exp_label -> args_label;
-    get_args : args_label -> exp_label list;
-    add_arg : args_label -> exp_label -> unit;
-    (* the node that contains this args label *)
-    args_parent : args_label -> exp_label;
-    (* all args labels that are associated with the given extvar *)
-    extvar_args : Type.extvar -> args_label list;
-    args_extvar : args_label -> Type.extvar;
-
-    (* FIXME *)
-    rename_child : (exp_label * exp_label) -> exp_label -> unit;
-  }
-
-let make_program ?(std_lib = []) ty =
-  let exp_tbl : exp_node ExpLabel.Tbl.t = ExpLabel.Tbl.create 100 in
-  let params_tbl : (var list) ParamsLabel.Tbl.t = ParamsLabel.Tbl.create 100 in
-  let args_tbl : (exp_label list) ArgsLabel.Tbl.t = ArgsLabel.Tbl.create 100 in
-  let extvar_params_tbl : (params_label list) Type.ExtVar.Tbl.t = Type.ExtVar.Tbl.create 100 in
-  let extvar_args_tbl : (args_label list) Type.ExtVar.Tbl.t = Type.ExtVar.Tbl.create 100 in
-  let args_parent_tbl : exp_label ArgsLabel.Tbl.t = ArgsLabel.Tbl.create 100 in
-  let params_extvar_tbl : Type.extvar ParamsLabel.Tbl.t = ParamsLabel.Tbl.create 100 in
-  let args_extvar_tbl : Type.extvar ArgsLabel.Tbl.t = ArgsLabel.Tbl.create 100 in
-
-  let ty_registry = Type.make () in
-
-  let new_var () = Var.make() in
-  let new_extvar () =
-    let extvar = ty_registry.new_extvar () in
-    Type.ExtVar.Tbl.add extvar_params_tbl extvar [];
-    Type.ExtVar.Tbl.add extvar_args_tbl extvar [];
-    extvar in
-
-
-  let new_exp node =
-    let lab = ExpLabel.make() in
-    ExpLabel.Tbl.add exp_tbl lab node;
-    lab in
-  let get_exp lab = ExpLabel.Tbl.find exp_tbl lab in
-  let set_exp lab node = ExpLabel.Tbl.replace exp_tbl lab node in
-
-  let new_params extvar =
-    let lab = ParamsLabel.make() in
-    ParamsLabel.Tbl.add params_tbl lab [];
-    Type.ExtVar.Tbl.replace extvar_params_tbl extvar
-                       (lab :: (Type.ExtVar.Tbl.find extvar_params_tbl extvar));
-    ParamsLabel.Tbl.add params_extvar_tbl lab extvar;
-    lab in
-  let get_params lab = ParamsLabel.Tbl.find params_tbl lab in
-  let add_param lab var =
-    ParamsLabel.Tbl.replace params_tbl lab
-                            (var :: (ParamsLabel.Tbl.find params_tbl lab));
-    () in
-  let extvar_params extvar = Type.ExtVar.Tbl.find extvar_params_tbl extvar in
-  let params_extvar lab = ParamsLabel.Tbl.find params_extvar_tbl lab in
-
-
-  let new_args extvar parent =
-    let lab = ArgsLabel.make() in
-    ArgsLabel.Tbl.add args_tbl lab [];
-    Type.ExtVar.Tbl.replace extvar_args_tbl extvar
-                       (lab :: (Type.ExtVar.Tbl.find extvar_args_tbl extvar));
-    ArgsLabel.Tbl.add args_extvar_tbl lab extvar;
-    ArgsLabel.Tbl.add args_parent_tbl lab parent;
-    lab in
-  let get_args lab = ArgsLabel.Tbl.find args_tbl lab in
-  let add_arg lab node =
-    ArgsLabel.Tbl.replace args_tbl lab
-                          (node :: (ArgsLabel.Tbl.find args_tbl lab));
-    () in
-  let extvar_args extvar = Type.ExtVar.Tbl.find extvar_args_tbl extvar in
-  let args_extvar lab = ArgsLabel.Tbl.find args_extvar_tbl lab in
-  let args_parent lab = ArgsLabel.Tbl.find args_parent_tbl lab in
-
-  (* Justin: I hate this so much *)
-  (* Ben: a necessary evil *)
-  let rename_child (a, b) e =
-    let rename e' = if e' == a then b else e' in
-
-    let node = get_exp e in
-    let set e' = set_exp e {exp=e'; ty=node.ty; prev=node.prev} in
-    match node.exp with
-    | Let (x, rhs, body) ->
-       set (Let (x, rename rhs, rename body))
-    | Lambda (params, body) ->
-      set (Lambda (params, rename body))
-    | Call (func, args) ->
-      set (Call (rename func, (List.map rename args)))
-    | ExtLambda (params, body) ->
-      set (ExtLambda (params, rename body))
-    | ExtCall (func, args) ->
-      ArgsLabel.Tbl.replace args_tbl args (List.map rename (get_args args));
-      set (ExtCall (rename func, args))
-    | If (pred, thn, els) ->
-      set (If (rename pred, rename thn, rename els))
-    | Cons (fst, rst) ->
-      set (Cons (rename fst, rename rst))
-    | Match (scr, nil, (fst, rst, cons)) ->
-       set (Match (rename scr, rename nil, (fst, rst, rename cons)))
-    | _ -> () in
-
-  let head = new_exp {exp=Hole; ty=ty_registry.flat_ty_to_ty ty; prev=None} in
-
+let make_program ?(ext_refs = []) (ty : External.ty) =
+  if not (Util.SS.is_empty (External.ty_vars ty))
+  then raise (Invalid_argument "supplied type contains type variables");
+  let prog_ty = ty_of_external_ty ty in
+  let init_hole =
+    ref (Hole { hole_ty = prog_ty;
+                hole_vars = [];
+                hole_params = [];
+              }) in
   {
-    head = head;
-
-    std_lib = std_lib;
-
-    ty = ty_registry;
-    new_var = new_var;
-    new_extvar = new_extvar;
-
-    new_exp = new_exp;
-    get_exp = get_exp;
-    set_exp = set_exp;
-
-    new_params = new_params;
-    get_params = get_params;
-    add_param = add_param;
-    extvar_params = extvar_params;
-    params_extvar = params_extvar;
-
-    new_args = new_args;
-    get_args = get_args;
-    add_arg = add_arg;
-    args_parent = args_parent;
-    extvar_args = extvar_args;
-    args_extvar = args_extvar;
-
-    rename_child = rename_child;
+    head = init_hole;
+    holes = [init_hole];
+    ext_refs = ext_refs;
   }
-
-(* check that the prev pointers are correct,
-   and that each node points to itself *)
-let consistency_check prog =
-
-  let rec check prev e =
-    let node = prog.get_exp e in
-    if prev <> node.prev
-    then raise (Util.ConsistencyError "Previous node pointer mismatch")
-    else Type.consistency_check prog.ty node.ty;
-         match node.exp with
-         | Hole -> ()
-         | Var _ -> ()
-         | StdLibRef _ -> ()
-
-         | ValInt _ -> ()
-         | ValBool _ -> ()
-
-         | Empty -> ()
-         | Cons (e1, e2) -> check (Some e) e1; check (Some e) e2
-         | Match (e1, e2, (_, _, e3)) -> check (Some e) e1; check (Some e) e2; check (Some e) e3
-
-         | Let (_, rhs, body) -> check (Some e) rhs; check (Some e) body
-         | Lambda (_, body) -> check (Some e) body
-         | Call (func, args) -> List.iter (check (Some e)) args; check (Some e) func
-
-         | ExtLambda (params, body) ->
-           let extvar = prog.params_extvar params in
-           if not (List.mem params (prog.extvar_params extvar))
-           then raise (Util.ConsistencyError "params label not in extvar list")
-           else check (Some e) body
-
-         | ExtCall (func, args) ->
-           let extvar = prog.args_extvar args in
-           if not (List.mem args (prog.extvar_args extvar))
-           then raise (Util.ConsistencyError "args label not in extvar list")
-           else List.iter (check (Some e)) (prog.get_args args);
-                check (Some e) func
-
-         | If (pred, thn, els) -> check (Some e) pred; check (Some e) thn; check (Some e) els
-
-(*
-         | Data {dcon=_; args=_} -> () (* todo *)
-         | Match {arg=_; pats=_} -> () (* todo *)
 *)
-         | Custom _ -> ()
-    in
-  (* check that the argsvars points to params, ty_params, and args *)
-  check None prog.head
 
+exception ConsistencyError of string
+
+let ensure_same_env (env1 : env) (env2 : env) =
+  if List.equal (Either.equal ~left:(List.equal (=))
+                              ~right:(=))
+                env1 env2
+  then ()
+  else raise (ConsistencyError "different environments")
+
+(* TODO: shadowing *)
+let ensure_var_in_env (x : var) (env : env) =
+  if List.exists (Either.fold ~left:(List.memq x)
+                              ~right:(fun l -> List.memq x !l))
+                 env
+  then ()
+  else raise (ConsistencyError "var not bound in env")
+
+let rec consistency_check env e =
+  match !e with
+  | Hole (_, env') -> ensure_same_env env env'
+  | Ref x -> ensure_var_in_env x env
+  | ExtRef _ -> ()
+  | Let (x, e1, e2) ->
+     consistency_check env e1;
+     consistency_check (Either.Left [x] :: env) e2
+  | Lambda (xs, e_body) ->
+     consistency_check (Either.Left xs :: env) e_body
+  | Call (e_f, e_args) ->
+     consistency_check env e_f;
+     List.iter (consistency_check env) e_args
+  | ExtLambda (evar, params, e_body) ->
+     if not (List.memq params evar.lambdas)
+     then raise (ConsistencyError "ext. lambda params not in extvar");
+     consistency_check (Either.Right params :: env) e_body
+  | ExtCall (e_f, evar, e_args) ->
+     (match List.assq_opt e_args evar.calls with
+      | None -> raise (ConsistencyError "ext. call args not in extvar")
+      | Some env' -> ensure_same_env env env');
+     consistency_check env e_f;
+     List.iter (consistency_check env) !e_args
 
 exception TypeCheckError of string
 
-(* TODO: FIXME: doesn't work properly with ty vars *)
-(* type check *)
-let type_check (prog : program) =
-  (* TODO: better errors *)
+(* not re-entrant on UnionFind.merge because types aren't recursive *)
+let rec ensure_same_ty ty1 ty2 =
+  let _ = UnionFind.merge
+    (fun ty_node1 ty_node2 ->
+      match ty_node1, ty_node2 with
+      | TyCons (name1, ty_args1), TyCons (name2, ty_args2) ->
+         if name1 <> name2
+         then raise (TypeCheckError "different type cons names");
+         if List.length ty_args1 <> List.length ty_args2
+         then raise (TypeCheckError "different number of type cons args");
+         List.iter2 ensure_same_ty ty_args1 ty_args2;
+         ty_node1
+      | TyArrow (ty_args1, ty_body1), TyArrow (ty_args2, ty_body2) ->
+         if List.length ty_args1 <> List.length ty_args2
+         then raise (TypeCheckError "different number of fun args");
+         List.iter2 ensure_same_ty ty_args2 ty_args2;
+         ensure_same_ty ty_body1 ty_body2;
+         ty_node1
+      | TyArrowExt (extvar1, ty_body1), TyArrowExt (extvar2, ty_body2) ->
+         if extvar1 <> extvar2
+         then raise (TypeCheckError "different extvars");
+         ensure_same_ty ty_body1 ty_body2;
+         ty_node1
+      | TyUnif, TyUnif ->
+         raise (TypeCheckError "different unification variables")
+      | _, _ -> raise (TypeCheckError "different type constructors"))
+    ty1 ty2 in ()
 
-  let ensure_same_extvar ex1 ex2 =
-    if Type.ExtVar.equal ex1 ex2
-    then ()
-    else raise (TypeCheckError "extvar mismatch") in
-
-  let ensure_same_ty tyl1 tyl2 =
-    if Type.is_same_ty prog.ty tyl1 tyl2
-    then ()
-    else raise (TypeCheckError "Type mismatch") in
-
-  let ensure_ty_compat ty tyl =
-    match Type.ty_compat_ty_label prog.ty ty tyl with
-    | None -> print_string (Type.string_of prog.ty tyl);
-              print_newline ();
-              raise (TypeCheckError "Invalid stdlib reference")
-    | Some _ -> () in
-
-  let rec type_check_exp gamma e =
-
-    let rec type_check_args exps tys =
-      (match (exps, tys) with
-       | ([], []) -> ()
-       | (exp :: exps', ty :: tys') ->
-         let ty' = type_check_exp gamma exp in
-         ensure_same_ty ty ty';
-         type_check_args exps' tys'
-       | _ -> raise (TypeCheckError "number of function call args differs from type")) in
-
-    let node = prog.get_exp e in
-    Type.consistency_check prog.ty node.ty;
-    match node.exp with
-    | Hole -> node.ty
-    | Var var ->
-      (match List.assoc_opt var gamma with
-       | None -> raise (TypeCheckError "Variable not in scope")
-       | Some ty' -> ensure_same_ty node.ty ty'; node.ty)
-    | StdLibRef str ->
-      (match List.assoc_opt str prog.std_lib with
-       | None -> raise (TypeCheckError "std lib object not found")
-       | Some ty' -> ensure_ty_compat ty' node.ty; node.ty)
-
-    | ValInt _ ->
-      if (prog.ty.get_ty node.ty) == TyInt
-      then node.ty
-      else raise (TypeCheckError "ValInt doesn't have type TyInt")
-
-    | Empty ->
-      (match (prog.ty.get_ty node.ty) with
-       | TyList _ -> node.ty
-       | _ -> raise (TypeCheckError "Empty doesn't have list type"))
-
-    | Cons (e1, e2) ->
-      let ty1 = type_check_exp gamma e1 in
-      let ty2 = type_check_exp gamma e2 in
-      (match prog.ty.get_ty ty2 with
-       | TyList ty2' -> ensure_same_ty ty1 ty2'
-       | _ -> raise (TypeCheckError "Cons doesn't have a list type"));
-      node.ty
-
-    | Match (e1, e2, (x, y, e3)) ->
-      let ty1 = type_check_exp gamma e1 in
-      let ty1' = (match prog.ty.get_ty ty1 with
-                  | TyList ty1' -> ty1'
-                  | _ -> raise (TypeCheckError "Match scrutinee doesn't have list type")) in
-      let ty2 = type_check_exp gamma e2 in
-      let ty3 = type_check_exp ((x, ty1') :: (y, ty1) :: gamma) e3 in
-      ensure_same_ty ty2 ty3;
-      node.ty
-
-    | ValBool _ ->
-      if (prog.ty.get_ty node.ty) == TyBool
-      then node.ty
-      else raise (TypeCheckError "ValBool doesn't have type TyBool")
-
-    | Let (var, rhs, body) ->
-      let rhs_ty = type_check_exp gamma rhs in
-      let body_ty = type_check_exp ((var, rhs_ty) :: gamma) body in
-      ensure_same_ty node.ty body_ty; node.ty
-
-    | Lambda (vars, body) ->
-      (match (prog.ty.get_ty node.ty) with
-       | TyArrow (tys, ty_im) ->
-         let ty_body = type_check_exp ((List.combine vars tys) @ gamma) body in
-         ensure_same_ty ty_body ty_im;
-         node.ty
-       | _ -> raise (TypeCheckError "lambda exp type not (closed) function type"))
-
-    | Call (func, args) ->
-      let func_ty = type_check_exp gamma func in
-      (match (prog.ty.get_ty func_ty) with
-       | TyArrow (tys, ty_im) ->
-         ensure_same_ty node.ty ty_im;
-         type_check_args args tys;
-         node.ty
-       | _ -> raise (TypeCheckError "callee exp not (closed) function type"))
-
-    (* todo: check and raise custom error when arg names and types
-             have different lengths *)
-    | ExtLambda (params, body) ->
-      (match (prog.ty.get_ty node.ty) with
-       | TyArrowExt (ty_params, ty_im) ->
-         ensure_same_extvar (prog.params_extvar params) (prog.ty.ty_params_extvar ty_params);
-         let vars = prog.get_params params in
-         let tys = prog.ty.get_ty_params ty_params in
-         let ty_body = type_check_exp ((List.combine vars tys) @ gamma) body in
-         ensure_same_ty ty_body ty_im;
-         node.ty
-       | _ -> raise (TypeCheckError "lambda exp type not (ext) function type"))
-
-    | ExtCall (func, args) ->
-      let func_ty = type_check_exp gamma func in
-      (match (prog.ty.get_ty func_ty) with
-       | TyArrowExt (ty_params, ty_im) ->
-         ensure_same_extvar (prog.args_extvar args) (prog.ty.ty_params_extvar ty_params);
-         ensure_same_ty node.ty ty_im;
-         let exps = prog.get_args args in
-         let tys = prog.ty.get_ty_params ty_params in
-         type_check_args exps tys;
-         node.ty
-       | _ -> raise (TypeCheckError "callee exp not (ext) function type"))
-
-    | If (pred, thn, els) ->
-      let typ = prog.ty.get_ty (type_check_exp gamma pred) in
-      if typ == TyBool
-      then (ensure_same_ty node.ty (type_check_exp gamma thn);
-            ensure_same_ty node.ty (type_check_exp gamma els);
-            node.ty)
-      else raise (TypeCheckError "if predicate does not have boolean type")
+(* typecheck *)
+let typecheck ext_refs (e : exp) =
+  let rec lp (e : exp) =
+    match !e with
+    | Hole (ty, _) -> ty
+    | Ref x -> x.var_ty
+    | ExtRef (x, ty) ->
+       (match List.assoc_opt x ext_refs with
+        | None -> raise (TypeCheckError "external ref not bound")
+        | Some ext_ty ->
+          if not (can_unify ty (ty_of_external_ty ext_ty))
+          then raise (TypeCheckError "external ref has invalid type");
+          ty)
+    | Let (x, e1, e2) ->
+       ensure_same_ty (lp e1) x.var_ty;
+       lp e2
+    | Lambda (xs, e_body) ->
+       make_ty (TyArrow (List.map (fun x -> x.var_ty) xs, lp e_body))
+    | Call (e_f, e_args) ->
+       let ty_f = lp e_f in
+       (match UnionFind.get ty_f with
+        | TyArrow (ty_args, ty_body) ->
+           if List.length ty_args <> List.length e_args
+           then raise (TypeCheckError "different call args length");
+           List.iter2 (fun e_arg ty_arg ->
+                         ensure_same_ty (lp e_arg) ty_arg)
+                      e_args ty_args;
+           ty_body
+        | _ -> raise (TypeCheckError "call of non-function"))
+    | ExtLambda (extvar, params, e_body) ->
+       if List.length extvar.param_tys <> List.length !params
+       then raise (TypeCheckError "different ext lambda params length");
+       List.iter2 (fun x ty -> ensure_same_ty x.var_ty ty)
+                  !params extvar.param_tys;
+       make_ty (TyArrowExt (extvar, lp e_body))
+    | ExtCall (e_f, extvar, e_args) ->
+       let ty_f = lp e_f in
+       (match UnionFind.get ty_f with
+        | TyArrowExt (extvar', ty_body) ->
+           if extvar != extvar'
+           then raise (TypeCheckError "different extvars");
+           if List.length extvar.param_tys <> List.length !e_args
+           then raise (TypeCheckError "different ext call args length");
+           List.iter2 (fun e_arg ty ->
+                         ensure_same_ty (lp e_arg) ty)
+                      !e_args extvar.param_tys;
+           ty_body
+        | _ -> raise (TypeCheckError "ext call of non-ext function"))
+  in lp e
 
 (*
-    | Data {dcon=_; args=_} -> ty (* todo *)
-
-    | Match {arg=arg; pats=_} ->
-      let _ = typeCheckExp gamma arg in
-      ty
-      (* todo: check that arg has the right data type*)
-      (* todo: want a totality check? *)
-      (* todo: i have no idea what is going on with dcons at all *)
-      (* todo: wtaf am i supposed to do here *)
-*)
-    | Custom _ -> node.ty
-  in
-  (* throw away the type label *)
-  let _ = type_check_exp [] prog.head in
-  ()
-
-(* perform the checks *)
-let check prog = (
-    consistency_check prog;
-    type_check prog;
-    ()
-  )
-
 type count_flags = bool * bool * bool * bool
 
 let flag_count_lambda = (false, true, false, false)
@@ -518,3 +411,4 @@ let count_binds (flags : count_flags) (prog : program) =
     | Custom _ -> base
     in
   snd (exp_binds prog.head)
+*)
