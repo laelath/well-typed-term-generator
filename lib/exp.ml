@@ -30,7 +30,7 @@ and var = {
   var_ty : ty;
   mutable var_refs : exp list;
 }
-and env = (var list, var list ref) Either.t list
+and env = (var list, extvar * var list ref) Either.t list
 
 (* INVARIANTS:
  * - the params list in ExtLambda is contained in the its extvar
@@ -85,8 +85,8 @@ let extvar_register_lambda ext params =
   ext.lambdas <- params :: ext.lambdas
 
 (* TODO: check well-formedness on registration *)
-let extvar_register_call ext env args =
-  ext.calls <- (env, args) :: ext.calls
+let extvar_register_call ext args env =
+  ext.calls <- (args, env) :: ext.calls
 
 (* returns true if if ty' contains ty *)
 (* TODO: less confusing name *)
@@ -230,7 +230,7 @@ let ensure_same_env (env1 : env) (env2 : env) =
 (* TODO: shadowing *)
 let ensure_var_in_env (x : var) (env : env) =
   if List.exists (Either.fold ~left:(List.memq x)
-                              ~right:(fun l -> List.memq x !l))
+                              ~right:(fun (_, l) -> List.memq x !l))
                  env
   then ()
   else raise (ConsistencyError "var not bound in env")
@@ -251,7 +251,7 @@ let rec consistency_check env e =
   | ExtLambda (evar, params, e_body) ->
      if not (List.memq params evar.lambdas)
      then raise (ConsistencyError "ext. lambda params not in extvar");
-     consistency_check (Either.Right params :: env) e_body
+     consistency_check (Either.Right (evar, params) :: env) e_body
   | ExtCall (e_f, evar, e_args) ->
      (match List.assq_opt e_args evar.calls with
       | None -> raise (ConsistencyError "ext. call args not in extvar")

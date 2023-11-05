@@ -2,6 +2,7 @@ type hole_info = {
     hole_exp : Exp.exp;
     hole_ty : Exp.ty;
     hole_env : Exp.env;
+    hole_fuel : int;
   }
 
 (* Implements the rule:
@@ -15,7 +16,7 @@ type hole_info = {
    E_1{alpha + tau}[lambda_i (x::xs) alpha . E_2{alpha + tau}[x]]
  *)
 (* PRECOND: params is in evar, params is in hole env *)
-let ref_extend_extvar_step (hole : hole_info) evar params =
+let ref_extend_extvar_step (hole : hole_info) (evar, params) =
   fun () ->
   Debug.run (fun () -> Printf.eprintf ("extending ext. var\n"));
   let holes = Exp.extend_extvar evar hole.hole_ty in
@@ -35,7 +36,7 @@ let ext_function_call_step (hole : hole_info) =
   let f_ty = Exp.make_ty (Exp.TyArrowExt (extvar, hole.hole_ty)) in
   let f = ref (Exp.Hole (f_ty, hole.hole_env)) in
   let args = ref [] in
-  Exp.extvar_register_call extvar hole.hole_env args;
+  Exp.extvar_register_call extvar args hole.hole_env;
   hole.hole_exp := Exp.ExtCall (f, extvar, args);
   [f]
 
@@ -55,6 +56,19 @@ let function_call_step (hole : hole_info) =
   let args = List.map (fun ty -> ref (Exp.Hole (ty, hole.hole_env))) tys in
   hole.hole_exp := Exp.Call (f, args);
   f :: args
+
+
+(* Implements the rule:
+   E[<>] ~> E[x]
+ *)
+(* PRECOND: hole.hole_ty can be unified with var.var_ty *)
+let ref_step (hole : hole_info) v =
+  fun () ->
+  Debug.run (fun () -> Printf.eprintf ("creating var reference\n"));
+  Exp.unify v.Exp.var_ty hole.hole_ty;
+  hole.hole_exp := Exp.Ref v;
+  Exp.var_register_ref v hole.hole_exp;
+  []
 
 
 (* Implements the rule:
@@ -83,7 +97,7 @@ let call_ref_step (hole : hole_info) f =
      let args = ref (List.map (fun ty -> ref (Exp.Hole (ty, hole.hole_env)))
                               evar.param_tys) in
      hole.hole_exp := Exp.ExtCall (f_exp, evar, args);
-     Exp.extvar_register_call evar hole.hole_env args;
+     Exp.extvar_register_call evar args hole.hole_env;
      !args
   | _ -> raise (Invalid_argument "call_ref_step with a variable of non-function type")
 
@@ -91,19 +105,6 @@ let call_ref_step (hole : hole_info) f =
 (* RIP: let insertion. it was too good for this world *)
 (* RIP: match insertion. gone before the world learned its potential *)
 (* RIP: match creation. hopefully I'll come up with a general solution *)
-
-(* Implements the rule:
-   E[<>] ~> E[x]
- *)
-(* PRECOND: hole.hole_ty can be unified with var.var_ty *)
-let var_step (hole : hole_info) v =
-  fun () ->
-  Debug.run (fun () -> Printf.eprintf ("creating var reference\n"));
-  Exp.unify v.Exp.var_ty hole.hole_ty;
-  hole.hole_exp := Exp.Ref v;
-  Exp.var_register_ref v hole.hole_exp;
-  []
-
 (* RIP: if creation: to be replaced by the future general match *)
 
 (* Implements the rule:
@@ -112,7 +113,7 @@ let var_step (hole : hole_info) v =
  *)
 (* x is the name of the external reference *)
 (* PRECOND: hole.hole_ty can be unified with ty *)
-let external_ref_step (hole : hole_info) (x, ty) =
+let external_ref_step (hole : hole_info) x ty =
   fun () ->
   Debug.run (fun () ->
     Printf.eprintf "creating external reference: %s\n" x);
@@ -125,7 +126,7 @@ let external_ref_step (hole : hole_info) (x, ty) =
    E[<>] ~>
  *)
 (* PRECOND: hole.hole_ty can be unified with ty_body *)
-let call_external_ref_step (hole : hole_info) (f, ty_args, ty_body) =
+let call_external_ref_step (hole : hole_info) f ty_args ty_body =
   fun () ->
   Debug.run (fun () ->
     Printf.eprintf "creating call of external reference: %s\n" f);
@@ -146,14 +147,14 @@ let lambda_step (hole : hole_info) =
      fun () ->
      Debug.run (fun () -> Printf.eprintf "creating lambda\n");
      let xs = List.map Exp.new_var ty_args in
-     let body = ref (Exp.Hole (ty_body, ref xs :: hole.hole_env)) in
+     let body = ref (Exp.Hole (ty_body, Either.Left xs :: hole.hole_env)) in
      hole.hole_exp := Exp.Lambda (xs, body);
      [body]
   | Exp.TyArrowExt (evar, ty_body) ->
      fun () ->
      Debug.run (fun () -> Printf.eprintf "creating ext. lambda\n");
      let xs = ref (List.map Exp.new_var evar.param_tys) in
-     let body = ref (Exp.Hole (ty_body, xs :: hole.hole_env)) in
+     let body = ref (Exp.Hole (ty_body, Either.Right (evar, xs) :: hole.hole_env)) in
      hole.hole_exp := Exp.ExtLambda (evar, xs, body);
      [body]
   | _ -> raise (Invalid_argument "lambda_step with hole of non-function type")
