@@ -1,7 +1,5 @@
-(* push element onto a list ref *)
-let push x l = l := x :: !l
-
-(* TODO: exp -> exp_node and exp = exp_node ref? *)
+open Extensions
+open Util
 
 (* expression and type datatype *)
 type exp_node =
@@ -104,25 +102,25 @@ let ty_contains_ty ty ty' =
   in lp ty'
 
 (* dictionary of zero-arg type constructors *)
-let ty_dict = ref Util.SM.empty
+let ty_dict = ref SM.empty
 let ty_of_external_ty (ty_top : External.ty) =
   let vars_map =
-    Util.sm_of_ss (fun _ -> make_ty TyUnif) (External.ty_vars ty_top) in
+    SM.of_string_set (fun _ -> make_ty TyUnif) (External.ty_vars ty_top) in
   let rec lp (ty : External.ty) =
     match ty with
     | TyCons (name, ty_args) ->
        (match ty_args with
         | [] ->
-           (match Util.SM.find_opt name !ty_dict with
+           (match SM.find_opt name !ty_dict with
             | Some ty_ref -> ty_ref
             | None ->
                let ty_ref = make_ty (TyCons (name, [])) in
-               ty_dict := Util.SM.add name ty_ref !ty_dict;
+               ty_dict := SM.add name ty_ref !ty_dict;
                ty_ref)
         | _ -> make_ty (TyCons (name, List.map lp ty_args)))
     | TyFun (arg_tys, ty_body) ->
        make_ty (TyArrow (List.map lp arg_tys, lp ty_body))
-    | TyVar a -> Util.SM.find a vars_map in
+    | TyVar a -> SM.find a vars_map in
   lp ty_top
 
 exception UnificationError
@@ -162,6 +160,8 @@ let rec unify ty1 ty2 =
 (* feels kinda wasteful that the mapping is just thrown away,
    but I suspect that the benefits of fully unifying the types
    might outweigh it? *)
+(* TODO: could merge unification variable free types here
+         for faster repeat checking, kinda hacky though *)
 let can_unify ty1 ty2 =
   let rec lp mp ty1 ty2 =
     if UnionFind.eq ty1 ty2 then mp else
@@ -203,7 +203,7 @@ let can_unify ty1 ty2 =
 
 (*
 let make_program ?(ext_refs = []) (ty : External.ty) =
-  if not (Util.SS.is_empty (External.ty_vars ty))
+  if not (SS.is_empty (External.ty_vars ty))
   then raise (Invalid_argument "supplied type contains type variables");
   let prog_ty = ty_of_external_ty ty in
   let init_hole =
@@ -349,19 +349,19 @@ let flag_count_let = (true, false, false, false)
 let count_binds (flags : count_flags) (prog : program) =
   let (count_let, count_lambda, count_ext_lambda, count_match) = flags in
   let sum = List.fold_left (+) 0 in
-  let base = (Util.SS.empty, (0, 0)) in
-  let num_unbound free = List.fold_left (fun n x -> if Util.SS.mem (Var.to_string x) free then n else n + 1) 0 in
-  let remove_vars = List.fold_left (fun free x -> Util.SS.remove (Var.to_string x) free) in
-  let rec exp_binds (e_lbl : exp_label) : (Util.SS.t * (int * int)) =
+  let base = (SS.empty, (0, 0)) in
+  let num_unbound free = List.fold_left (fun n x -> if SS.mem (Var.to_string x) free then n else n + 1) 0 in
+  let remove_vars = List.fold_left (fun free x -> SS.remove (Var.to_string x) free) in
+  let rec exp_binds (e_lbl : exp_label) : (SS.t * (int * int)) =
     let node = prog.get_exp e_lbl in
     match node.exp with
     | Hole -> base
-    | Var x -> (Util.SS.singleton (Var.to_string x), (0, 0))
+    | Var x -> (SS.singleton (Var.to_string x), (0, 0))
     | StdLibRef _ -> base
     | Let (x, rhs, body) ->
       let (free_rhs, (t_rhs, u_rhs)) = exp_binds rhs in
       let (free_body, (t_body, u_body)) = exp_binds body in
-      (Util.SS.union free_rhs (remove_vars free_body [x]),
+      (SS.union free_rhs (remove_vars free_body [x]),
        (t_rhs + t_body + (if count_let then 1 else 0),
         u_rhs + u_body + (if count_let then num_unbound free_body [x] else 0)))
     | Lambda (vars, body) ->
@@ -373,7 +373,7 @@ let count_binds (flags : count_flags) (prog : program) =
       let (free_f, (t_f, u_f)) = exp_binds f in
       let (frees_args, tus_args) = List.split (List.map exp_binds args) in
       let (ts_args, us_args) = List.split tus_args in
-      (List.fold_left Util.SS.union free_f frees_args,
+      (List.fold_left SS.union free_f frees_args,
        (sum ts_args + t_f, sum us_args + u_f))
     | ExtLambda (params_lbl, body) ->
       let vars = prog.get_params params_lbl in
@@ -386,27 +386,27 @@ let count_binds (flags : count_flags) (prog : program) =
       let (free_f, (t_f, u_f)) = exp_binds f in
       let (frees_args, tus_args) = List.split (List.map exp_binds args) in
       let (ts_args, us_args) = List.split tus_args in
-      (List.fold_left Util.SS.union free_f frees_args,
+      (List.fold_left SS.union free_f frees_args,
        (sum ts_args + t_f, sum us_args + u_f))
     | ValInt _ -> base
     | ValBool _ -> base
     | Cons (e1, e2) ->
       let (free_e1, (t_e1, u_e1)) = exp_binds e1 in
       let (free_e2, (t_e2, u_e2)) = exp_binds e2 in
-      (Util.SS.union free_e1 free_e2, (t_e1 + t_e2, u_e1 + u_e2))
+      (SS.union free_e1 free_e2, (t_e1 + t_e2, u_e1 + u_e2))
     | Empty -> base
     | Match (e1, e2, (x, y, e3)) ->
       let (free_e1, (t_e1, u_e1)) = exp_binds e1 in
       let (free_e2, (t_e2, u_e2)) = exp_binds e2 in
       let (free_e3, (t_e3, u_e3)) = exp_binds e3 in
-      (Util.SS.union free_e1 (Util.SS.union free_e2 (remove_vars free_e3 [x; y])),
+      (SS.union free_e1 (SS.union free_e2 (remove_vars free_e3 [x; y])),
        (t_e1 + t_e2 + t_e3 + (if count_match then 2 else 0),
         u_e1 + u_e2 + u_e3 + (if count_match then num_unbound free_e3 [x; y] else 0)))
     | If (pred, thn, els) ->
       let (free_pred, (t_pred, u_pred)) = exp_binds pred in
       let (free_thn, (t_thn, u_thn)) = exp_binds thn in
       let (free_els, (t_els, u_els)) = exp_binds els in
-      (Util.SS.union free_pred (Util.SS.union free_thn free_els),
+      (SS.union free_pred (SS.union free_thn free_els),
        (t_pred + t_thn + t_els, u_pred + u_thn + u_els))
     | Custom _ -> base
     in

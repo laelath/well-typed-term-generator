@@ -1,141 +1,187 @@
+(* an implementation of the Urn datatype described in
+   Ode to a Random Urn *)
+(* TODO: add a better reference *)
 
-type weight = float
+open Extensions
+open AlmostPerfect
 
-type random_sample = weight -> weight
+module type WeightType =
+  sig
+    type t
+    val compare : t -> t -> int
+    val zero : t
+    val add : t -> t -> t
+    val sub : t -> t -> t
+    (* sample function should produce a value between
+       0 inclusive and the provided value exclusive *)
+    val sample : t -> t
+  end
 
-type 'a tree = Node of weight * ('a tree) * ('a tree)
-             | Leaf of weight * ('a base)
-and 'a base = Value of 'a
-            (* lazy nesting *)
-            | Nested of (unit -> 'a nested_urn)
-and 'a nested_urn = Urn of {size : int; tree : ('a tree) option}
+module type U =
+  sig
+    type weight
+    type !+'a t
+    val singleton : weight -> 'a -> 'a t
+    val of_list : (weight * 'a) list -> 'a t option
+    val sample : 'a t -> 'a
+    val remove : 'a t -> (weight * 'a) * 'a t option
+    val insert : weight -> 'a -> 'a t -> 'a t
+    val update :
+      (weight -> 'a -> weight * 'a) -> 'a t ->
+      (weight * 'a) * (weight * 'a) * 'a t
+    val update_opt :
+      (weight -> 'a -> (weight * 'a) option) -> 'a t ->
+      (weight * 'a) * (weight * 'a) option * 'a t option
+    val replace : weight -> 'a -> 'a t -> (weight * 'a) * 'a t
+    val size : 'a t -> int
+    val weight : 'a t -> weight
+  end
 
-type 'a t = 'a nested_urn
+module Make(Weight : WeightType) = struct
 
-let weight tree =
-  match tree with
-  | Node (w, _, _) -> w
-  | Leaf (w, _) -> w
+  type weight = Weight.t
 
-let empty : 'a nested_urn =
-  Urn {size=1; tree=None}
+  let (+) = Weight.add
+  let (-) = Weight.sub
 
-let insert (urn0 : 'a nested_urn) w' a' =
-  let Urn {size=size0; tree=tree0} = urn0 in
-  match tree0 with
-  | None -> Urn {size=1; tree=Some (Leaf (w', a'))}
-  | Some tree0 ->
-     let rec insert_rec tree path =
-       match tree with
-       | Node (w, l, r) ->
-          if path mod 2 = 1
-          then Node (w +. w', l, insert_rec r (path/2))
-          else Node (w +. w', insert_rec l (path/2), r)
-       | Leaf (w, a) -> Node (w +. w', Leaf (w, a), Leaf (w', a'))
-     in
-     Urn {size=size0+1; tree=Some (insert_rec tree0 size0)}
+  type 'a wtree =
+      WLeaf of {w: weight; a: 'a}
+    | WNode of {w: weight; l: 'a wtree; r: 'a wtree}
 
-(*
-let insert_list (urn0 : 'a nested_urn) pairs = ...
- *)
+  type 'a t = {size: int; tree: 'a wtree}
 
+  let size urn = urn.size
 
-exception EmptyUrn
+  let weight_tree t =
+    match t with
+    | WLeaf {w; _} -> w
+    | WNode {w; _} -> w
 
-let rec sample_opt (rand : random_sample) (urn0 : 'a nested_urn) : 'a option =
-  let Urn {size=_; tree=tree0} = urn0 in
-  match tree0 with
-  | None -> None
-  | Some tree0 ->
-     let rec sample_rec tree i =
-       match tree with
-       | Leaf (_, base) ->
-          (match base with
-           | Value a -> a
-           | Nested urn ->
-              sample rand (urn()))
-       | Node (_, l, r) ->
-          let wl = weight l in
-          if i < wl
-          then sample_rec l i
-          else sample_rec r (i -. wl)
-     in
-     let sample = rand (weight tree0) in
-     Some (sample_rec tree0 sample)
+  let weight {tree; _} = weight_tree tree
 
-and sample (rand : random_sample) (urn : 'a nested_urn) =
-  match sample_opt rand urn with
-  | None -> raise EmptyUrn
-  | Some a -> a
+  let singleton w a = {size=1; tree=WLeaf {w; a}}
 
-let uninsert_opt (urn0 : 'a nested_urn) : ('a nested_urn * weight * ('a base) * weight) option =
-  let Urn {size=size0; tree=tree0} = urn0 in
-  match tree0 with
-  | None -> None
-  | Some tree0 ->
-     let rec uninsert_rec tree path lb =
-       match tree with
-       | Leaf (w, base) -> (None, w, base, lb)
-       | Node (w, l, r) ->
-          if path mod 2 = 1
-          then
-            let lb = lb +. weight l in
-            let (rem, w', a, lb) = uninsert_rec r (path/2) lb in
-            (match rem with
-             | None -> (Some l, w', a, lb)
-             | Some r -> (Some (Node (w -. w', l, r)), w', a, lb))
-          else
-            let (rem, w', a, lb) = uninsert_rec l (path/2) lb in
-            (match rem with
-             | None -> (Some r, w', a, lb)
-             | Some l -> (Some (Node (w -. w', l, r)), w', a, lb))
-     in
-     let (res, w, a, lb) = uninsert_rec tree0 (size0-1) 0. in
-     Some (Urn {size=size0; tree=res}, w, a, lb)
+  let sampler f urn = f urn (Weight.sample (weight urn))
 
+  let sample_index {tree; _} i =
+    let rec sample_tree tree i =
+      match tree with
+      | WLeaf {a; _} -> a
+      | WNode {l; r; _} ->
+         let wl = weight_tree l in
+         if i < wl
+         then sample_tree l i
+         else sample_tree r (i - wl)
+    in sample_tree tree i
 
-let rec replace (tree : 'a tree) (w', a') sample =
-  match tree with
-  | Leaf (w, base) -> (w, base, Leaf (w', a'))
-  | Node (w, l, r) ->
-     let wl = weight l in
-     if sample < wl
-     then let (w_a, a, res) = replace l (w', a') sample in
-          (w_a, a, Node (w -. w_a +. w', res, r))
-     else let (w_a, a, res) = replace r (w', a') (sample -. wl) in
-          (w_a, a, Node (w -. w_a +. w', l, res))
+  let sample urn = sampler sample_index urn
 
-let local_remove_opt (rand : random_sample) (urn0 : 'a nested_urn) : (weight * ('a base) * 'a nested_urn) option =
-  match urn0 with
-  | Urn {tree=None; _} -> None
-  | Urn {tree=Some tree0; _} ->
-     let sample = rand(weight tree0) in
-     match uninsert_opt urn0 with
-     | None -> None
-     | Some (urn, w, a, lb) ->
-        let Urn {tree; size} = urn in
-        match tree with
-        | None -> Some (w, a, urn)
-        | Some tree ->
-           if sample < lb
-           then let (w', a', res) = replace tree (w, a) sample in
-                Some (w', a', Urn {tree=Some res; size=size})
-           else if sample < lb +. w
-           then Some (w, a, urn)
-           else let (w', a', res) = replace tree (w, a) (sample -. w) in
-                Some (w', a', Urn {tree=Some res; size=size})
+  let update_index upd {size; tree} i =
+    let rec update_tree tree i =
+      match tree with
+      | WLeaf {w; a} ->
+         let (w', a') = upd w a in
+         ((w, a), (w', a'), WLeaf {w=w'; a=a'})
+      | WNode {w; l; r} ->
+         let wl = weight_tree l in
+         if i < wl
+         then let (old, nw, l') = update_tree l i in
+              (old, nw, WNode {w=w - fst old + fst nw; l=l'; r})
+         else let (old, nw, r') = update_tree r (i - wl) in
+              (old, nw, WNode {w=w - fst old + fst nw; l; r=r'})
+    in let (old, nw, tree') = update_tree tree i in
+       (old, nw, {size; tree=tree'})
 
-let rec remove_opt (rand : random_sample) (urn0 : 'a nested_urn) =
-  match local_remove_opt rand urn0 with
-  | None -> None
-  | Some (w, res, urn) ->
-     match res with
-     | Value _ -> Some (w, res, urn)
-     | Nested urn' ->
-        match remove_opt rand (urn' ()) with
-        | None ->
-           (* this case *should* never happen, but I think we don't actually remove empty urns right now *)
-           (* TODO: refactor local_remove_opt and uninsert_opt to operate on trees rather than urns to enforce this *)
-           Some (w, res, urn)
-        | Some (w', res', urn'') ->
-           Some (w', res', insert urn w (Nested (fun () -> urn'')))
+  let update upd urn = sampler (update_index upd) urn
+
+  let replace_index w' a' {size; tree} i =
+    let rec replace_tree tree i =
+      match tree with
+      | WLeaf {w; a} ->
+         ((w, a), WLeaf {w=w'; a=a'})
+      | WNode {w; l; r} ->
+         let wl = weight_tree l in
+         if i < wl
+         then let (old, l') = replace_tree l i in
+              (old, WNode {w=w - fst old + w'; l=l'; r})
+         else let (old, r') = replace_tree r (i - wl) in
+              (old, WNode {w=w - fst old + w'; l; r=r'})
+    in let (old, tree') = replace_tree tree i in
+       (old, {size; tree=tree'})
+
+  let replace w' a' urn = sampler (replace_index w' a') urn
+
+  let insert w' a' {size; tree} =
+    let rec go path tree =
+      match tree with
+      | WLeaf {w; a} ->
+         WNode {w=w+w'; l=WLeaf {w; a}; r=WLeaf {w=w'; a=a'}}
+      | WNode {w; l; r} ->
+         let path' = Int.shift_right path 1 in
+         if Int.test_bit path 0
+         then WNode {w=w+w'; l; r=go path' r}
+         else WNode {w=w+w'; l=go path' l; r}
+    in {size=Int.succ size; tree=go size tree}
+
+  let uninsert {size; tree} =
+    let rec go path tree =
+      match tree with
+      | WLeaf {w; a} -> ((w, a), Weight.zero, None)
+      | WNode {w; l; r} ->
+         let path' = Int.shift_right path 1 in
+         if Int.test_bit path 0
+         then let ((w', a'), lb, tree_opt) = go path' r in
+              ((w', a'), lb,
+               Some (match tree_opt with
+                     | None -> r
+                     | Some l' -> WNode {w=w-w'; l=l'; r}))
+         else let ((w', a'), lb, tree_opt) = go path' l in
+              ((w', a'), lb + weight_tree l,
+               Some (match tree_opt with
+                     | None -> l
+                     | Some r' -> WNode {w=w-w'; l; r=r'}))
+    in let ((w', a'), lb, tree_opt) = go (Int.pred size) tree in
+       ((w', a'), lb,
+        Option.map (fun tree -> {size=Int.pred size; tree}) tree_opt)
+
+  let remove_index urn i = 
+    let ((w', a'), lb, urn_opt') = uninsert urn in
+    match urn_opt' with
+    | None -> ((w', a'), None)
+    | Some urn' ->
+       if i < lb
+       then let (old, urn'') = replace_index w' a' urn' i in
+            (old, Some urn'')
+       else if i < lb + w'
+       then ((w', a'), Some urn')
+       else let (old, urn'') = replace_index w' a' urn' (i - w') in
+            (old, Some urn'')
+
+  let remove urn = sampler remove_index urn
+
+  (* TODO: can this be done without removing from the tree when
+           upd returns Some? *)
+  let update_opt_index upd urn i =
+    let ((w, a), urn_opt') = remove_index urn i in
+    match upd w a with
+    | None -> ((w, a), None, urn_opt')
+    | Some (w', a') ->
+       ((w, a), Some (w', a'),
+        match urn_opt' with
+        | None -> Some (singleton w' a')
+        | Some urn' -> Some (insert w' a' urn'))
+
+  let update_opt upd urn = sampler (update_opt_index upd) urn
+
+  let of_list was =
+    Option.map
+      (fun was ->
+         let size = NonEmpty.length was in
+         almost_perfect
+           (fun l r -> WNode {w=weight_tree l + weight_tree r; l; r})
+           (fun (w, a) -> WLeaf {w; a})
+           size
+           was)
+      was
+
+end

@@ -1,7 +1,9 @@
-(* TODO: HERE
+
+
+
 type worklist = {
-    pop : unit -> Exp.exp_label option;
-    add : int * Exp.exp_label-> unit;
+    pop : unit -> Exp.exp option;
+    add : int * Exp.exp -> unit;
   }
 type state = {
     worklist : worklist;
@@ -32,6 +34,7 @@ let make_state (fuel : int) : state =
    MAIN LOOP
  *)
 
+(* TODO: HERE
 let assert_hole (exp : Exp.exp) =
   match exp with
   | Exp.Hole -> ()
