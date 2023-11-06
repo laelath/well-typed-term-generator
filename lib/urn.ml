@@ -17,6 +17,16 @@ module type WeightType =
     val sample : t -> t
   end
 
+module IntWeight : WeightType = struct
+  include Int
+  let sample = Random.int
+end
+
+module FloatWeight : WeightType = struct
+  include Float
+  let sample = Random.float
+end
+
 module type U =
   sig
     type weight
