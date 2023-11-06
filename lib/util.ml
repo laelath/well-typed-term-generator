@@ -1,6 +1,6 @@
 exception Unimplemented
 
-exception Impossible of string
+exception Internal_error of string
 
 module SS = struct
 

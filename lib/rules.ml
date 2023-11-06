@@ -18,7 +18,7 @@ type hole_info = {
 (* PRECOND: params is in evar, params is in hole env *)
 let ref_extend_extvar_step (hole : hole_info) (evar, params) =
   fun () ->
-  Debug.run (fun () -> Printf.eprintf ("extending ext. var\n"));
+  Debug.say (fun () -> "extending ext. var");
   let holes = Exp.extend_extvar evar hole.hole_ty in
   let x = List.hd !params in
   hole.hole_exp := Ref x;
@@ -31,7 +31,7 @@ let ref_extend_extvar_step (hole : hole_info) (evar, params) =
  *)
 let ext_function_call_step (hole : hole_info) =
   fun () ->
-  Debug.run (fun () -> Printf.eprintf ("creating ext. function call\n"));
+  Debug.say (fun () -> "creating ext. function call");
   let extvar = Exp.new_extvar () in
   let f_ty = Exp.make_ty (Exp.TyArrowExt (extvar, hole.hole_ty)) in
   let f = ref (Exp.Hole (f_ty, hole.hole_env)) in
@@ -48,7 +48,7 @@ let rec sample_num_args acc =
 
 let function_call_step (hole : hole_info) =
   fun () ->
-  Debug.run (fun () -> Printf.eprintf ("creating function call\n"));
+  Debug.say (fun () -> "creating function call");
   let n = sample_num_args 0 in
   let tys = List.init n (fun _ -> Exp.make_ty Exp.TyUnif) in
   let f_ty = Exp.make_ty (Exp.TyArrow (tys, hole.hole_ty)) in
@@ -64,7 +64,7 @@ let function_call_step (hole : hole_info) =
 (* PRECOND: hole.hole_ty can be unified with var.var_ty *)
 let ref_step (hole : hole_info) v =
   fun () ->
-  Debug.run (fun () -> Printf.eprintf ("creating var reference\n"));
+  Debug.say (fun () -> "creating var reference");
   Exp.unify v.Exp.var_ty hole.hole_ty;
   hole.hole_exp := Exp.Ref v;
   Exp.var_register_ref v hole.hole_exp;
@@ -80,7 +80,7 @@ let call_ref_step (hole : hole_info) f =
   match UnionFind.get f.Exp.var_ty with
   | Exp.TyArrow (ty_args, ty_body) ->
      fun () ->
-     Debug.run (fun () -> Printf.eprintf ("creating call of ref\n"));
+     Debug.say (fun () -> "creating call of ref");
      Exp.unify ty_body hole.hole_ty;
      let f_exp = ref (Exp.Ref f) in
      Exp.var_register_ref f f_exp;
@@ -90,7 +90,7 @@ let call_ref_step (hole : hole_info) f =
      args
   | Exp.TyArrowExt (evar, ty_body) ->
      fun () ->
-     Debug.run (fun () -> Printf.eprintf ("creating ext. call of ref\n"));
+     Debug.say (fun () -> "creating ext. call of ref\n");
      Exp.unify ty_body hole.hole_ty;
      let f_exp = ref (Exp.Ref f) in
      Exp.var_register_ref f f_exp;
@@ -115,8 +115,7 @@ let call_ref_step (hole : hole_info) f =
 (* PRECOND: hole.hole_ty can be unified with ty *)
 let external_ref_step (hole : hole_info) x ty =
   fun () ->
-  Debug.run (fun () ->
-    Printf.eprintf "creating external reference: %s\n" x);
+  Debug.say (fun () -> "creating external reference: " ^ x);
   Exp.unify hole.hole_ty ty;
   hole.hole_exp := Exp.ExtRef (x, ty);
   []
@@ -128,8 +127,7 @@ let external_ref_step (hole : hole_info) x ty =
 (* PRECOND: hole.hole_ty can be unified with ty_body *)
 let call_external_ref_step (hole : hole_info) f ty_args ty_body =
   fun () ->
-  Debug.run (fun () ->
-    Printf.eprintf "creating call of external reference: %s\n" f);
+  Debug.say (fun () -> "creating call of external reference: " ^ f);
   Exp.unify hole.hole_ty ty_body;
   let f_ty = Exp.make_ty (Exp.TyArrow (ty_args, ty_body)) in
   let f_exp = ref (Exp.ExtRef (f, f_ty)) in
@@ -145,14 +143,14 @@ let lambda_step (hole : hole_info) =
   match UnionFind.get hole.hole_ty with
   | Exp.TyArrow (ty_args, ty_body) ->
      fun () ->
-     Debug.run (fun () -> Printf.eprintf "creating lambda\n");
+     Debug.say (fun () -> "creating lambda");
      let xs = List.map Exp.new_var ty_args in
      let body = ref (Exp.Hole (ty_body, Either.Left xs :: hole.hole_env)) in
      hole.hole_exp := Exp.Lambda (xs, body);
      [body]
   | Exp.TyArrowExt (evar, ty_body) ->
      fun () ->
-     Debug.run (fun () -> Printf.eprintf "creating ext. lambda\n");
+     Debug.say (fun () -> "creating ext. lambda");
      let xs = ref (List.map Exp.new_var evar.param_tys) in
      let body = ref (Exp.Hole (ty_body, Either.Right (evar, xs) :: hole.hole_env)) in
      hole.hole_exp := Exp.ExtLambda (evar, xs, body);

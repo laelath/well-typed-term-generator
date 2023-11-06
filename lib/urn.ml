@@ -17,15 +17,17 @@ module type WeightType =
     val sample : t -> t
   end
 
-module IntWeight : WeightType = struct
+module IntWeight : WeightType with type t = int = struct
   include Int
   let sample = Random.int
 end
 
-module FloatWeight : WeightType = struct
+module FloatWeight : WeightType with type t = float = struct
   include Float
   let sample = Random.float
 end
+
+(* sample, remove, update, update_opt, replace are effectful *)
 
 module type U =
   sig
@@ -33,9 +35,12 @@ module type U =
     type !+'a t
     val singleton : weight -> 'a -> 'a t
     val of_list : (weight * 'a) list -> 'a t option
+    val of_nonempty : (weight * 'a) nonempty -> 'a t
     val sample : 'a t -> 'a
     val remove : 'a t -> (weight * 'a) * 'a t option
-    val insert : weight -> 'a -> 'a t -> 'a t
+    val add : weight -> 'a -> 'a t -> 'a t
+    val add_seq : (weight * 'a) Seq.t -> 'a t -> 'a t
+    val add_list : (weight * 'a) list -> 'a t -> 'a t
     val update :
       (weight -> 'a -> weight * 'a) -> 'a t ->
       (weight * 'a) * (weight * 'a) * 'a t
@@ -47,7 +52,7 @@ module type U =
     val weight : 'a t -> weight
   end
 
-module Make(Weight : WeightType) = struct
+module Make(Weight : WeightType) : U with type weight = Weight.t = struct
 
   type weight = Weight.t
 
@@ -121,7 +126,7 @@ module Make(Weight : WeightType) = struct
 
   let replace w' a' urn = sampler (replace_index w' a') urn
 
-  let insert w' a' {size; tree} =
+  let add w' a' {size; tree} =
     let rec go path tree =
       match tree with
       | WLeaf {w; a} ->
@@ -133,7 +138,7 @@ module Make(Weight : WeightType) = struct
          else WNode {w=w+w'; l=go path' l; r}
     in {size=Int.succ size; tree=go size tree}
 
-  let uninsert {size; tree} =
+  let unadd {size; tree} =
     let rec go path tree =
       match tree with
       | WLeaf {w; a} -> ((w, a), Weight.zero, None)
@@ -155,7 +160,7 @@ module Make(Weight : WeightType) = struct
         Option.map (fun tree -> {size=Int.pred size; tree}) tree_opt)
 
   let remove_index urn i = 
-    let ((w', a'), lb, urn_opt') = uninsert urn in
+    let ((w', a'), lb, urn_opt') = unadd urn in
     match urn_opt' with
     | None -> ((w', a'), None)
     | Some urn' ->
@@ -179,19 +184,27 @@ module Make(Weight : WeightType) = struct
        ((w, a), Some (w', a'),
         match urn_opt' with
         | None -> Some (singleton w' a')
-        | Some urn' -> Some (insert w' a' urn'))
+        | Some urn' -> Some (add w' a' urn'))
 
   let update_opt upd urn = sampler (update_opt_index upd) urn
 
-  let of_list was =
-    Option.map
-      (fun was ->
-         let size = NonEmpty.length was in
-         almost_perfect
-           (fun l r -> WNode {w=weight_tree l + weight_tree r; l; r})
-           (fun (w, a) -> WLeaf {w; a})
-           size
-           was)
-      was
+  let of_nonempty was =
+    let size = NonEmpty.length was in
+    {size;
+     tree = almost_perfect
+              (fun l r -> WNode {w=weight_tree l + weight_tree r; l; r})
+              (fun (w, a) -> WLeaf {w; a})
+              size
+              was}
+
+  let of_list was = Option.map of_nonempty (NonEmpty.of_list was)
+
+  let add_list was urn =
+    List.fold_left (fun acc (w, a) -> add w a acc) urn was
+
+  let add_seq was urn =
+    Seq.fold_left (fun acc (w, a) -> add w a acc) urn was
+
+  (*let add_seq = Fun.flip (Seq.fold_left (Fun.flip (Fun.uncurry add)))*)
 
 end

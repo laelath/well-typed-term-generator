@@ -52,6 +52,7 @@ let external_ref_steps ext_refs weight (hole : hole_info) =
            tys
 
 (* TODO: generating tys from etys twice seems wasteful *)
+(*       (duplicated between external_ref_steps and here) *)
 let call_external_ref_steps ext_refs weight (hole : hole_info) =
   let tys = List.filter_map
               (fun (w, x, ety) ->
