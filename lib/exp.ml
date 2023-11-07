@@ -43,9 +43,9 @@ let make_unif () =
   UnionFind.set ty (TyUnif ty);
   ty
 
-(* technically variables, like extension variables don't need a name
- * but since creating one would be harder as part of an extractor,
- * we do it here
+(* Technically variables, like extension variables, don't need a name.
+ * But since creating one would be harder as part of an extractor,
+ * we do it here.
  *)
 let var_counter = ref 0
 let reset_var_counter () = var_counter := 0
@@ -102,8 +102,7 @@ let rec ty_contains_extvar evar ty =
      evar == evar' || ty_contains_extvar evar ty_body
   | TyUnif _ -> false
 
-(* TODO: shadowing *)
-(* TODO: move to exp *)
+(* TODO: shadowing? *)
 let filter_env f (env : env) =
   let g x = f x.var_ty in
   List.concat_map
@@ -170,41 +169,54 @@ let rec unify ty10 ty20 =
          for faster repeat checking, kinda hacky though *)
 let can_unify ty10 ty20 =
 
+  let lookup ty mp0 =
+    let ty_rep = UnionFind.find ty in
+    let rec lp mp =
+      match mp with
+      | [] -> None
+      | (ty_rep', ty') :: mp' ->
+         if ty_rep == ty_rep'
+         then Some (ty', mp')
+         else lp mp' in
+    lp mp0 in
+
+  let add ty ty' mp = (UnionFind.find ty, ty') :: mp in
+
   (* returns true if if ty_node contains ty' *)
-  let contains_ty mp ty' ty_node0 =
-    let rec lp_ty ty =
-      UnionFind.eq ty' ty || lp_ty_node (UnionFind.get ty)
-    and lp_ty_node ty_node =
+  let contains_ty mp0 ty' ty_node0 =
+    let rec lp_ty mp ty =
+      UnionFind.eq ty' ty || lp_ty_node mp (UnionFind.get ty)
+    and lp_ty_node mp ty_node =
       match ty_node with
       | TyCons (_, ty_args) ->
-         List.exists lp_ty ty_args
+         List.exists (lp_ty mp) ty_args
       | TyArrow (ty_args, ty_body) ->
-         List.exists lp_ty ty_args || lp_ty ty_body
+         List.exists (lp_ty mp) ty_args || lp_ty mp ty_body
       | TyArrowExt (evar, ty_body) ->
-         List.exists lp_ty evar.param_tys || lp_ty ty_body
+         List.exists (lp_ty mp) evar.param_tys || lp_ty mp ty_body
       | TyUnif ty ->
-         match List.assq_opt (UnionFind.find ty) mp with
+         match lookup ty mp with
          | None -> false
-         | Some ty1 -> lp_ty ty1 in
-    lp_ty_node ty_node0 in
+         | Some (ty1, mp') -> lp_ty mp' ty1 in
+    lp_ty_node mp0 ty_node0 in
 
   let rec lp mp ty1 ty2 =
     if UnionFind.eq ty1 ty2 then mp else
     match UnionFind.get ty1, UnionFind.get ty2 with
     | TyUnif _, ty_node2 ->
-       (match List.assq_opt (UnionFind.find ty1) mp with
-        | Some ty1' -> lp mp ty1' ty2
+       (match lookup ty1 mp with
+        | Some (ty1', _) -> lp mp ty1' ty2
         | None ->
            if contains_ty mp ty1 ty_node2
            then raise UnificationError
-           else (UnionFind.find ty1, ty2) :: mp)
+           else add ty1 ty2 mp)
     | ty_node1, TyUnif _ ->
-       (match List.assq_opt (UnionFind.find ty2) mp with
-        | Some ty2' -> lp mp ty1 ty2'
+       (match lookup ty2 mp with
+        | Some (ty2', _) -> lp mp ty1 ty2'
         | None ->
            if contains_ty mp ty2 ty_node1
            then raise UnificationError
-           else (UnionFind.find ty2, ty1) :: mp)
+           else add ty2 ty1 mp)
     | TyCons (n1, tys1), TyCons (n2, tys2) ->
        if not (n1 = n2 && List.length tys1 = List.length tys2)
        then raise UnificationError
@@ -321,7 +333,7 @@ let ensure_same_env (env1 : env) (env2 : env) =
   then ()
   else raise (ConsistencyError "different environments")
 
-(* TODO: shadowing *)
+(* TODO: shadowing? *)
 let ensure_var_in_env (x : var) (env : env) =
   if List.exists (Either.fold ~left:(List.memq x)
                               ~right:(fun (_, l) -> List.memq x !l))
@@ -479,8 +491,6 @@ let merge_stats s1 s2 = {
     extvars = s1.extvars @ s2.extvars;
     external_refs = s1.external_refs @ s2.external_refs;
   }
-
-let (-.*) f m = fun a b -> m a (f b)
 
 let memq_add x l =
   if List.memq x l

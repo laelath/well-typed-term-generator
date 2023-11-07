@@ -99,7 +99,7 @@ let call_ref_step (hole : hole_info) f =
      hole.hole_exp := Exp.ExtCall (f_exp, evar, args);
      Exp.extvar_register_call evar args hole.hole_env;
      !args
-  | _ -> raise (Invalid_argument "call_ref_step with a variable of non-function type")
+  | _ -> invalid_arg "call_ref_step with a variable of non-function type"
 
 
 (* RIP: let insertion. it was too good for this world *)
@@ -156,4 +156,4 @@ let lambda_step (hole : hole_info) =
      let body = ref (Exp.Hole (ty_body, Either.Right (evar, xs) :: hole.hole_env)) in
      hole.hole_exp := Exp.ExtLambda (evar, xs, body);
      [body]
-  | _ -> raise (Invalid_argument "lambda_step with hole of non-function type")
+  | _ -> invalid_arg "lambda_step with hole of non-function type"

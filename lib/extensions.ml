@@ -1,7 +1,11 @@
 (* a wish list of things to go into the standard library *)
 
 (* push element onto a list ref *)
-let push x l = l := x :: !l
+let push x l_ref = l_ref := x :: !l_ref
+let pop l_ref =
+  let l = !l_ref in
+  l_ref := List.tl l;
+  List.hd l
 
 module Int = struct
 
@@ -12,7 +16,7 @@ module Int = struct
   (* best I can do without count leading zeros *)
   let log2 x =
     if x <= 0
-    then raise (Invalid_argument "Int.log2: argument <= 0");
+    then invalid_arg "Int.log2: argument <= 0";
     let rec lp acc x =
       match x with
       | 0 -> assert false
@@ -41,7 +45,7 @@ module NonEmpty = struct
 
   let to_list (Head (h, t)) = h :: t
 
-  let length (Head (_, t)) = 1 + List.length t
+  let length (Head (_, t)) = Int.succ (List.length t)
 
   let singleton x = Head (x, [])
   let cons x (Head (h, t)) = Head (x, h :: t)
@@ -64,3 +68,5 @@ module Fun = struct
 end
 
 let ($) f a = f a
+let (-.*) f m = fun a b -> m a (f b)
+

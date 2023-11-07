@@ -60,7 +60,7 @@ let generate_lp
 
 let generate_exp ext_refs (fuel0 : int) uty (ty : External.ty) =
   if not (SS.is_empty (External.ty_vars ty))
-  then raise (Invalid_argument "cannot generate polymorphic types");
+  then invalid_arg "cannot generate polymorphic types";
   let ty = Exp.ty_of_external_ty ty in
   let e = ref (Exp.Hole (ty, [])) in
   let check () =
