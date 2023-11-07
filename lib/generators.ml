@@ -3,32 +3,6 @@ type hole_info = Rules.hole_info
 let const_weight weight f x =
   (weight, f x)
 
-(* TODO: shadowing *)
-(* TODO: move to exp *)
-let filter_env f (env : Exp.env) =
-  let g x = f x.Exp.var_ty in
-  List.concat_map
-    (Either.fold ~left:(fun l -> List.filter g l)
-                 ~right:(fun (_, l) -> List.filter g !l))
-    env
-
-let ty_is_fun_producing ty ty_f =
-  match UnionFind.get ty_f with
-  | Exp.TyArrow (_, ty_body) -> Exp.can_unify ty ty_body
-  | Exp.TyArrowExt (_, ty_body) -> Exp.can_unify ty ty_body 
-  | _ -> false
-
-let rec ty_contains_extvar evar ty =
-  match UnionFind.get ty with
-  | Exp.TyCons (_, tys) ->
-     List.exists (ty_contains_extvar evar) tys
-  | Exp.TyArrow (ty_params, ty_body) ->
-     List.exists (ty_contains_extvar evar) ty_params ||
-     ty_contains_extvar evar ty_body
-  | Exp.TyArrowExt (evar', ty_body) ->
-     evar == evar' || ty_contains_extvar evar ty_body
-  | Exp.TyUnif _ -> false
-
 (*
   TRANSITIONS
  *)
@@ -37,25 +11,25 @@ let ref_extend_extvar_steps weight (hole : hole_info) =
   let ext_params =
     List.filter_map Either.find_right hole.hole_env |>
     List.filter (fun (evar, _) ->
-                   not (ty_contains_extvar evar hole.hole_ty)) in
+                   not (Exp.ty_contains_extvar evar hole.hole_ty)) in
   List.map (fun (evar, params) ->
               (weight hole /. Int.to_float (1 + List.length !params),
                Rules.ref_extend_extvar_step hole (evar, params)))
            ext_params
 
 let ref_steps weight (hole : hole_info) =
-  let vars = filter_env (Exp.can_unify hole.hole_ty) hole.hole_env in
+  let vars = Exp.filter_env (Exp.can_unify hole.hole_ty) hole.hole_env in
   List.map (const_weight (weight hole) (Rules.ref_step hole)) vars
 
 let call_ref_steps weight (hole : hole_info) =
-  let vars = filter_env (ty_is_fun_producing hole.hole_ty)
+  let vars = Exp.filter_env (Exp.ty_is_fun_producing hole.hole_ty)
                         hole.hole_env in
   List.map (const_weight (weight hole) (Rules.call_ref_step hole)) vars
 
 (* TODO: can optimize by saving the monomorphic tys separately *)
 let external_ref_steps ext_refs weight (hole : hole_info) =
   let tys = List.filter_map
-              (fun (w, x, ety) ->
+              (fun (w, (x, ety)) ->
                 let ty = Exp.ty_of_external_ty ety in
                 if Exp.can_unify hole.hole_ty ty
                 then Some (w, x, ty)
@@ -70,7 +44,7 @@ let external_ref_steps ext_refs weight (hole : hole_info) =
 (*       (duplicated between external_ref_steps and here) *)
 let call_external_ref_steps ext_refs weight (hole : hole_info) =
   let tys = List.filter_map
-              (fun (w, x, ety) ->
+              (fun (w, (x, ety)) ->
                 let ty = Exp.ty_of_external_ty ety in
                 match UnionFind.get ty with
                 | Exp.TyArrow (ty_args, ty_body) ->

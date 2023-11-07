@@ -62,3 +62,5 @@ module Fun = struct
   let uncurry f (x, y) = f x y 
 
 end
+
+let ($) f a = f a

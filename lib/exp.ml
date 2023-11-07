@@ -83,35 +83,35 @@ let extend_extvar ext ty =
               hole)
            ext.calls
 
-(* TODO: check well-formedness on registration *)
+(* TODO: check well-formedness on registration in debug *)
 let extvar_register_lambda ext params =
   ext.lambdas <- params :: ext.lambdas
 
-(* TODO: check well-formedness on registration *)
+(* TODO: check well-formedness on registration in debug *)
 let extvar_register_call ext args env =
   ext.calls <- (args, env) :: ext.calls
 
-(* dictionary of zero-arg type constructors *)
-let ty_dict = ref SM.empty
-let ty_of_external_ty (ty_top : External.ty) =
-  let vars_map =
-    SM.of_string_set (fun _ -> make_unif ()) (External.ty_vars ty_top) in
-  let rec lp (ty : External.ty) =
-    match ty with
-    | TyCons (name, ty_args) ->
-       (match ty_args with
-        | [] ->
-           (match SM.find_opt name !ty_dict with
-            | Some ty_ref -> ty_ref
-            | None ->
-               let ty_ref = make_ty (TyCons (name, [])) in
-               ty_dict := SM.add name ty_ref !ty_dict;
-               ty_ref)
-        | _ -> make_ty (TyCons (name, List.map lp ty_args)))
-    | TyFun (arg_tys, ty_body) ->
-       make_ty (TyArrow (List.map lp arg_tys, lp ty_body))
-    | TyVar a -> SM.find a vars_map in
-  lp ty_top
+let rec ty_contains_extvar evar ty =
+  match UnionFind.get ty with
+  | TyCons (_, tys) ->
+     List.exists (ty_contains_extvar evar) tys
+  | TyArrow (ty_params, ty_body) ->
+     List.exists (ty_contains_extvar evar) ty_params ||
+     ty_contains_extvar evar ty_body
+  | TyArrowExt (evar', ty_body) ->
+     evar == evar' || ty_contains_extvar evar ty_body
+  | TyUnif _ -> false
+
+(* TODO: shadowing *)
+(* TODO: move to exp *)
+let filter_env f (env : env) =
+  let g x = f x.var_ty in
+  List.concat_map
+    (Either.fold ~left:(fun l -> List.filter g l)
+                 ~right:(fun (_, l) -> List.filter g !l))
+    env
+
+(** Unification *)
 
 exception UnificationError
 
@@ -226,22 +226,88 @@ let can_unify ty10 ty20 =
   with
     UnificationError -> false
 
-(*
-let make_program ?(ext_refs = []) (ty : External.ty) =
-  if not (SS.is_empty (External.ty_vars ty))
-  then raise (Invalid_argument "supplied type contains type variables");
-  let prog_ty = ty_of_external_ty ty in
-  let init_hole =
-    ref (Hole { hole_ty = prog_ty;
-                hole_vars = [];
-                hole_params = [];
-              }) in
-  {
-    head = init_hole;
-    holes = [init_hole];
-    ext_refs = ext_refs;
-  }
-*)
+let ty_is_fun_producing ty ty_f =
+  match UnionFind.get ty_f with
+  | TyArrow (_, ty_body) -> can_unify ty ty_body
+  | TyArrowExt (_, ty_body) -> can_unify ty ty_body 
+  | _ -> false
+
+
+(** Converting between internal and external facing types *)
+
+(* dictionary of zero-arg type constructors *)
+let ty_dict = ref SM.empty
+let ty_of_external_ty (ty_top : External.ty) =
+  let vars_map =
+    SM.of_string_set (fun _ -> make_unif ()) (External.ty_vars ty_top) in
+  let rec lp (ty : External.ty) =
+    match ty with
+    | TyCons (name, ty_args) ->
+       (match ty_args with
+        | [] ->
+           (match SM.find_opt name !ty_dict with
+            | Some ty_ref -> ty_ref
+            | None ->
+               let ty_ref = make_ty (TyCons (name, [])) in
+               ty_dict := SM.add name ty_ref !ty_dict;
+               ty_ref)
+        | _ -> make_ty (TyCons (name, List.map lp ty_args)))
+    | TyFun (arg_tys, ty_body) ->
+       make_ty (TyArrow (List.map lp arg_tys, lp ty_body))
+    | TyVar a -> SM.find a vars_map in
+  lp ty_top
+
+
+(* uty is used in place of any unresolved unification variables *)
+let ty_to_external_ty uty ty0 : External.ty =
+  let[@tail_mod_cons] rec lp ty =
+    match UnionFind.get ty with
+    | TyUnif _ -> uty
+    | TyCons (name, tys) ->
+       External.TyCons (name, List.map lp tys)
+    | TyArrow (ty_args, ty_body) ->
+       External.TyFun (List.map lp ty_args, lp ty_body)
+    | TyArrowExt (evar, ty_body) ->
+       lp (make_ty (TyArrow (evar.param_tys, ty_body))) in
+  lp ty0
+
+exception FoundHole
+
+let exp_to_external_exp uty e0 =
+  let[@tail_mod_cons] rec lp env e =
+    match !e with
+    | Hole _ -> raise FoundHole
+    | Ref x -> List.assq x env
+    | ExtRef (x, ty) -> External.Ref (x, ty_to_external_ty uty ty)
+    | Let (x, e1, e2) ->
+       let x_ty = ty_to_external_ty uty x.var_ty in
+       External.Let
+         ((x.var_name, x_ty), lp env e1,
+          (lp[@tailcall])
+            ((x, External.Ref (x.var_name, x_ty)) :: env)
+            e2)
+    | Lambda (xs, e_body) ->
+       let xs_tys = List.map (fun x ->
+                               ty_to_external_ty uty x.var_ty)
+                             xs in
+       External.Lambda
+         (List.map2 (fun x ty -> (x.var_name, ty)) xs xs_tys,
+          lp (List.map2 (fun x ty ->
+                           (x, External.Ref (x.var_name, ty)))
+                        xs xs_tys @ env)
+             e_body)
+    | Call (e_f, e_args) ->
+       External.Call
+         (lp env e_f,
+          List.map (lp env) e_args)
+    | ExtLambda (_, xs, e_body) ->
+       lp env (ref (Lambda (!xs, e_body)))
+    | ExtCall (e_f, _, e_args) ->
+       lp env (ref (Call (e_f, !e_args))) in
+  lp [] e0
+
+
+(** Debug mode invariant checking functions *)
 
 exception ConsistencyError of string
 
@@ -286,7 +352,8 @@ let rec consistency_check env e =
      if not (List.memq e x.var_refs)
      then raise (ConsistencyError "var ref not in refs list");
      ensure_var_in_env x env
-  | ExtRef _ -> ()
+  | ExtRef (_, ty) ->
+     consistency_check_ty ty
   | Let (x, e1, e2) ->
      consistency_check_ty x.var_ty;
      consistency_check env e1;
@@ -330,7 +397,7 @@ let rec ensure_same_ty ty1 ty2 =
          ensure_same_ty ty_body1 ty_body2;
          ty_node1
       | TyArrowExt (extvar1, ty_body1), TyArrowExt (extvar2, ty_body2) ->
-         if extvar1 <> extvar2
+         if extvar1 != extvar2
          then raise (TypeCheckError "different extvars");
          ensure_same_ty ty_body1 ty_body2;
          ty_node1
@@ -388,55 +455,6 @@ let typecheck ext_refs (e : exp) =
            ty_body
         | _ -> raise (TypeCheckError "ext call of non-ext function"))
   in lp e
-
-exception FoundHole
-
-(* uty is used in place of any unresolved unification variables *)
-let ty_to_external_ty uty ty0 : External.ty =
-  let[@tail_mod_cons] rec lp ty =
-    match UnionFind.get ty with
-    | TyUnif _ -> uty
-    | TyCons (name, tys) ->
-       External.TyCons (name, List.map lp tys)
-    | TyArrow (ty_args, ty_body) ->
-       External.TyFun (List.map lp ty_args, lp ty_body)
-    | TyArrowExt (evar, ty_body) ->
-       lp (make_ty (TyArrow (evar.param_tys, ty_body))) in
-  lp ty0
-
-let exp_to_external_exp uty e0 =
-  let[@tail_mod_cons] rec lp env e =
-    match !e with
-    | Hole _ -> raise FoundHole
-    | Ref x -> List.assq x env
-    | ExtRef (x, ty) -> External.Ref (x, ty_to_external_ty uty ty)
-    | Let (x, e1, e2) ->
-       let x_ty = ty_to_external_ty uty x.var_ty in
-       External.Let
-         ((x.var_name, x_ty), lp env e1,
-          (lp[@tailcall])
-            ((x, External.Ref (x.var_name, x_ty)) :: env)
-            e2)
-    | Lambda (xs, e_body) ->
-       let xs_tys = List.map (fun x ->
-                               ty_to_external_ty uty x.var_ty)
-                             xs in
-       External.Lambda
-         (List.map2 (fun x ty -> (x.var_name, ty)) xs xs_tys,
-          lp (List.map2 (fun x ty ->
-                           (x, External.Ref (x.var_name, ty)))
-                        xs xs_tys @ env)
-             e_body)
-    | Call (e_f, e_args) ->
-       External.Call
-         (lp env e_f,
-          List.map (lp env) e_args)
-    | ExtLambda (_, xs, e_body) ->
-       lp env (ref (Lambda (!xs, e_body)))
-    | ExtCall (e_f, _, e_args) ->
-       lp env (ref (Call (e_f, !e_args))) in
-  lp [] e0
-
 
 type binding_stats = {
   n_vars                  : int;

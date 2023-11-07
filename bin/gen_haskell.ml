@@ -90,21 +90,17 @@ let generate_haskell size =
     | "id" | "undefined" -> 1. /. 10.
     | _ -> 1. in
   let weighted_std_lib =
-    List.map (fun (x, ty) -> (weights x, x, ty)) haskell_std_lib in
+    List.map (fun entry -> (weights (fst entry), entry)) haskell_std_lib in
   let gen_ty = [tList tInt] --> tList tInt in
-  Generate.generate_exp (Generators.main weighted_std_lib) size tInt gen_ty
+  Generate.generate_exp weighted_std_lib size tInt gen_ty
   (* TODO: program stats in debug mode *)
 
-let generate_batch batch_size exp_size =
-  let rec gen_batch batch acc =
-    if batch == 0
-    then acc
-    else let p = generate_haskell exp_size in
-         Debug.run prerr_newline;
-         gen_batch (Int.pred batch) (p :: acc)
-  in
-  let progs = gen_batch batch_size [] in
-  progs
+let generate_batch exp_size batch_size =
+  Seq.init batch_size
+           (fun _ ->
+             let p = generate_haskell exp_size in
+             Debug.run prerr_newline;
+             p)
 
 let generate_file fs =
   "module Main where\n" ^
@@ -153,5 +149,5 @@ let () =
    then Random.self_init ()
    else Random.init !seed);
 
-  let fs = List.map haskell_string (generate_batch !n !size) in
-  print_string (generate_file fs)
+  let fs = Seq.map haskell_string (generate_batch !size !n) in
+  print_string (generate_file (List.of_seq fs))
