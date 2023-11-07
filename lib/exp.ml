@@ -456,87 +456,54 @@ let typecheck ext_refs (e : exp) =
         | _ -> raise (TypeCheckError "ext call of non-ext function"))
   in lp e
 
-type binding_stats = {
-  n_vars                  : int;
-  n_let_vars              : int;
-  n_lambda_vars           : int;
-  n_ext_lambda_vars       : int;
-  n_bound_vars            : int;
-  n_bound_let_vars        : int;
-  n_bound_lambda_vars     : int;
-  n_bound_ext_lambda_vars : int;
+type stats = {
+  vars              : var list;
+  lambda_params     : var list list;
+  ext_lambda_params : var list list;
+  extvars           : extvar list;
+  external_refs     : (string * ty) list;
 }
 
-(*
-type count_flags = bool * bool * bool * bool
+let empty_stats = {
+  vars = [];
+  lambda_params = [];
+  ext_lambda_params = [];
+  extvars = [];
+  external_refs = [];
+}
 
-let flag_count_lambda = (false, true, false, false)
-let flag_count_ext_lambda = (false, false, true, false)
-let flag_count_let = (true, false, false, false)
+let merge_stats s1 s2 = {
+    vars = s1.vars @ s2.vars;
+    lambda_params = s1.lambda_params @ s2.lambda_params;
+    ext_lambda_params = s1.ext_lambda_params @ s2.ext_lambda_params;
+    extvars = s1.extvars @ s2.extvars;
+    external_refs = s1.external_refs @ s2.external_refs;
+  }
 
-let count_binds (flags : count_flags) (prog : program) =
-  let (count_let, count_lambda, count_ext_lambda, count_match) = flags in
-  let sum = List.fold_left (+) 0 in
-  let base = (SS.empty, (0, 0)) in
-  let num_unbound free = List.fold_left (fun n x -> if SS.mem (Var.to_string x) free then n else n + 1) 0 in
-  let remove_vars = List.fold_left (fun free x -> SS.remove (Var.to_string x) free) in
-  let rec exp_binds (e_lbl : exp_label) : (SS.t * (int * int)) =
-    let node = prog.get_exp e_lbl in
-    match node.exp with
-    | Hole -> base
-    | Var x -> (SS.singleton (Var.to_string x), (0, 0))
-    | StdLibRef _ -> base
-    | Let (x, rhs, body) ->
-      let (free_rhs, (t_rhs, u_rhs)) = exp_binds rhs in
-      let (free_body, (t_body, u_body)) = exp_binds body in
-      (SS.union free_rhs (remove_vars free_body [x]),
-       (t_rhs + t_body + (if count_let then 1 else 0),
-        u_rhs + u_body + (if count_let then num_unbound free_body [x] else 0)))
-    | Lambda (vars, body) ->
-      let (free, (t, u)) = exp_binds body in
-      (remove_vars free vars,
-       (t + (if count_lambda then List.length vars else 0), 
-        u + (if count_lambda then num_unbound free vars else 0)))
-    | Call (f, args) ->
-      let (free_f, (t_f, u_f)) = exp_binds f in
-      let (frees_args, tus_args) = List.split (List.map exp_binds args) in
-      let (ts_args, us_args) = List.split tus_args in
-      (List.fold_left SS.union free_f frees_args,
-       (sum ts_args + t_f, sum us_args + u_f))
-    | ExtLambda (params_lbl, body) ->
-      let vars = prog.get_params params_lbl in
-      let (free, (t, u)) = exp_binds body in
-      (remove_vars free vars,
-       (t + (if count_ext_lambda then List.length vars else 0), 
-        u + (if count_ext_lambda then num_unbound free vars else 0)))
-    | ExtCall (f, args_lbl) ->
-      let args = prog.get_args args_lbl in
-      let (free_f, (t_f, u_f)) = exp_binds f in
-      let (frees_args, tus_args) = List.split (List.map exp_binds args) in
-      let (ts_args, us_args) = List.split tus_args in
-      (List.fold_left SS.union free_f frees_args,
-       (sum ts_args + t_f, sum us_args + u_f))
-    | ValInt _ -> base
-    | ValBool _ -> base
-    | Cons (e1, e2) ->
-      let (free_e1, (t_e1, u_e1)) = exp_binds e1 in
-      let (free_e2, (t_e2, u_e2)) = exp_binds e2 in
-      (SS.union free_e1 free_e2, (t_e1 + t_e2, u_e1 + u_e2))
-    | Empty -> base
-    | Match (e1, e2, (x, y, e3)) ->
-      let (free_e1, (t_e1, u_e1)) = exp_binds e1 in
-      let (free_e2, (t_e2, u_e2)) = exp_binds e2 in
-      let (free_e3, (t_e3, u_e3)) = exp_binds e3 in
-      (SS.union free_e1 (SS.union free_e2 (remove_vars free_e3 [x; y])),
-       (t_e1 + t_e2 + t_e3 + (if count_match then 2 else 0),
-        u_e1 + u_e2 + u_e3 + (if count_match then num_unbound free_e3 [x; y] else 0)))
-    | If (pred, thn, els) ->
-      let (free_pred, (t_pred, u_pred)) = exp_binds pred in
-      let (free_thn, (t_thn, u_thn)) = exp_binds thn in
-      let (free_els, (t_els, u_els)) = exp_binds els in
-      (SS.union free_pred (SS.union free_thn free_els),
-       (t_pred + t_thn + t_els, u_pred + u_thn + u_els))
-    | Custom _ -> base
-    in
-  snd (exp_binds prog.head)
-*)
+let (-.*) f m = fun a b -> m a (f b)
+
+let memq_add x l =
+  if List.memq x l
+  then l
+  else x :: l
+
+let rec collect_stats e =
+  match !e with
+  | Hole _ -> empty_stats
+  | Ref _ -> empty_stats
+  | ExtRef (x, ty) -> { empty_stats with external_refs = [(x, ty)] }
+  | Lambda (xs, e_body) ->
+     let s = collect_stats e_body in
+     { s with lambda_params = xs :: s.lambda_params }
+  | Call (e_f, e_args) ->
+     List.fold_left (collect_stats -.* merge_stats)
+                    (collect_stats e_f) e_args
+  | ExtLambda (evar, params, e_body) ->
+     let s = collect_stats e_body in
+     { s with ext_lambda_params = !params :: s.ext_lambda_params;
+              extvars = memq_add evar s.extvars }
+  | ExtCall (e_f, evar, e_args) ->
+     let s = List.fold_left (collect_stats -.* merge_stats)
+                            (collect_stats e_f) !e_args in
+     { s with extvars = memq_add evar s.extvars }
+  | _ -> raise Unimplemented
