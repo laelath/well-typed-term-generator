@@ -16,3 +16,9 @@ let rec ty_vars ty =
   | TyFun (arg_tys, ty_body) ->
      SS.union (SS.union_seq (Seq.map ty_vars (List.to_seq arg_tys)))
               (ty_vars ty_body)
+
+type exp =
+  | Ref of string * ty
+  | Call of exp * exp list
+  | Lambda of (string * ty) list * exp
+  | Let of (string * ty) * exp * exp

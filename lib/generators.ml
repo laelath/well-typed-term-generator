@@ -18,14 +18,29 @@ let ty_is_fun_producing ty ty_f =
   | Exp.TyArrowExt (_, ty_body) -> Exp.can_unify ty ty_body 
   | _ -> false
 
+let rec ty_contains_extvar evar ty =
+  match UnionFind.get ty with
+  | Exp.TyCons (_, tys) ->
+     List.exists (ty_contains_extvar evar) tys
+  | Exp.TyArrow (ty_params, ty_body) ->
+     List.exists (ty_contains_extvar evar) ty_params ||
+     ty_contains_extvar evar ty_body
+  | Exp.TyArrowExt (evar', ty_body) ->
+     evar == evar' || ty_contains_extvar evar ty_body
+  | Exp.TyUnif _ -> false
+
 (*
   TRANSITIONS
  *)
 
 let ref_extend_extvar_steps weight (hole : hole_info) =
-  let ext_params = List.filter_map Either.find_right hole.hole_env in
-  List.map (const_weight (weight hole)
-                         (Rules.ref_extend_extvar_step hole))
+  let ext_params =
+    List.filter_map Either.find_right hole.hole_env |>
+    List.filter (fun (evar, _) ->
+                   not (ty_contains_extvar evar hole.hole_ty)) in
+  List.map (fun (evar, params) ->
+              (weight hole /. Int.to_float (1 + List.length !params),
+               Rules.ref_extend_extvar_step hole (evar, params)))
            ext_params
 
 let ref_steps weight (hole : hole_info) =
@@ -59,7 +74,7 @@ let call_external_ref_steps ext_refs weight (hole : hole_info) =
                 let ty = Exp.ty_of_external_ty ety in
                 match UnionFind.get ty with
                 | Exp.TyArrow (ty_args, ty_body) ->
-                    if Exp.can_unify ty ty_body
+                    if Exp.can_unify hole.hole_ty ty_body
                     then Some (w, x, ty_args, ty_body)
                     else None
                 | _ -> None)
@@ -70,6 +85,7 @@ let call_external_ref_steps ext_refs weight (hole : hole_info) =
            tys
 
 (* TODO: either merge lambdas and ext lambdas or split them in rules.ml *)
+(* TODO: these could resolve type variables? *)
 let lambda_steps weight (hole : hole_info) =
   match UnionFind.get hole.hole_ty with
   | TyArrow _ -> [(weight hole, Rules.lambda_step hole)]

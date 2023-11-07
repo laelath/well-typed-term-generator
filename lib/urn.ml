@@ -17,12 +17,12 @@ module type WeightType =
     val sample : t -> t
   end
 
-module IntWeight : WeightType with type t = int = struct
+module IntWeight = struct
   include Int
   let sample = Random.int
 end
 
-module FloatWeight : WeightType with type t = float = struct
+module FloatWeight = struct
   include Float
   let sample = Random.float
 end
@@ -52,7 +52,7 @@ module type U =
     val weight : 'a t -> weight
   end
 
-module Make(Weight : WeightType) : U with type weight = Weight.t = struct
+module Make(Weight : WeightType) = struct
 
   type weight = Weight.t
 
@@ -78,7 +78,7 @@ module Make(Weight : WeightType) : U with type weight = Weight.t = struct
 
   let sampler f urn = f urn (Weight.sample (weight urn))
 
-  let sample_index {tree; _} i =
+  let sample_index {tree=tree0; _} i =
     let rec sample_tree tree i =
       match tree with
       | WLeaf {a; _} -> a
@@ -87,11 +87,11 @@ module Make(Weight : WeightType) : U with type weight = Weight.t = struct
          if i < wl
          then sample_tree l i
          else sample_tree r (i - wl)
-    in sample_tree tree i
+    in sample_tree tree0 i
 
   let sample urn = sampler sample_index urn
 
-  let update_index upd {size; tree} i =
+  let update_index upd {size; tree=tree0} i =
     let rec update_tree tree i =
       match tree with
       | WLeaf {w; a} ->
@@ -104,12 +104,12 @@ module Make(Weight : WeightType) : U with type weight = Weight.t = struct
               (old, nw, WNode {w=w - fst old + fst nw; l=l'; r})
          else let (old, nw, r') = update_tree r (i - wl) in
               (old, nw, WNode {w=w - fst old + fst nw; l; r=r'})
-    in let (old, nw, tree') = update_tree tree i in
+    in let (old, nw, tree') = update_tree tree0 i in
        (old, nw, {size; tree=tree'})
 
   let update upd urn = sampler (update_index upd) urn
 
-  let replace_index w' a' {size; tree} i =
+  let replace_index w' a' {size; tree=tree0} i =
     let rec replace_tree tree i =
       match tree with
       | WLeaf {w; a} ->
@@ -121,13 +121,13 @@ module Make(Weight : WeightType) : U with type weight = Weight.t = struct
               (old, WNode {w=w - fst old + w'; l=l'; r})
          else let (old, r') = replace_tree r (i - wl) in
               (old, WNode {w=w - fst old + w'; l; r=r'})
-    in let (old, tree') = replace_tree tree i in
+    in let (old, tree') = replace_tree tree0 i in
        (old, {size; tree=tree'})
 
   let replace w' a' urn = sampler (replace_index w' a') urn
 
-  let add w' a' {size; tree} =
-    let rec go path tree =
+  let add w' a' {size; tree=tree0} =
+    let[@tail_mod_cons] rec go path tree =
       match tree with
       | WLeaf {w; a} ->
          WNode {w=w+w'; l=WLeaf {w; a}; r=WLeaf {w=w'; a=a'}}
@@ -136,26 +136,26 @@ module Make(Weight : WeightType) : U with type weight = Weight.t = struct
          if Int.test_bit path 0
          then WNode {w=w+w'; l; r=go path' r}
          else WNode {w=w+w'; l=go path' l; r}
-    in {size=Int.succ size; tree=go size tree}
+    in {size=Int.succ size; tree=go size tree0}
 
-  let unadd {size; tree} =
+  let unadd {size; tree=tree0} =
     let rec go path tree =
       match tree with
       | WLeaf {w; a} -> ((w, a), Weight.zero, None)
       | WNode {w; l; r} ->
          let path' = Int.shift_right path 1 in
          if Int.test_bit path 0
-         then let ((w', a'), lb, tree_opt) = go path' r in
-              ((w', a'), lb,
-               Some (match tree_opt with
-                     | None -> r
-                     | Some l' -> WNode {w=w-w'; l=l'; r}))
-         else let ((w', a'), lb, tree_opt) = go path' l in
+         then let ((w', a'), lb, r_opt') = go path' r in
               ((w', a'), lb + weight_tree l,
-               Some (match tree_opt with
+               Some (match r_opt' with
                      | None -> l
                      | Some r' -> WNode {w=w-w'; l; r=r'}))
-    in let ((w', a'), lb, tree_opt) = go (Int.pred size) tree in
+         else let ((w', a'), lb, l_opt') = go path' l in
+              ((w', a'), lb,
+               Some (match l_opt' with
+                     | None -> r
+                     | Some l' -> WNode {w=w-w'; l=l'; r}))
+    in let ((w', a'), lb, tree_opt) = go (Int.pred size) tree0 in
        ((w', a'), lb,
         Option.map (fun tree -> {size=Int.pred size; tree}) tree_opt)
 

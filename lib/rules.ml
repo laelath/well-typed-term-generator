@@ -50,7 +50,7 @@ let function_call_step (hole : hole_info) =
   fun () ->
   Debug.say (fun () -> "creating function call");
   let n = sample_num_args 0 in
-  let tys = List.init n (fun _ -> Exp.make_ty Exp.TyUnif) in
+  let tys = List.init n (fun _ -> Exp.make_unif ()) in
   let f_ty = Exp.make_ty (Exp.TyArrow (tys, hole.hole_ty)) in
   let f = ref (Exp.Hole (f_ty, hole.hole_env)) in
   let args = List.map (fun ty -> ref (Exp.Hole (ty, hole.hole_env))) tys in
@@ -152,6 +152,7 @@ let lambda_step (hole : hole_info) =
      fun () ->
      Debug.say (fun () -> "creating ext. lambda");
      let xs = ref (List.map Exp.new_var evar.param_tys) in
+     Exp.extvar_register_lambda evar xs;
      let body = ref (Exp.Hole (ty_body, Either.Right (evar, xs) :: hole.hole_env)) in
      hole.hole_exp := Exp.ExtLambda (evar, xs, body);
      [body]

@@ -11,15 +11,15 @@ let choose_split (lst : 'a list) : 'a * ('a list) =
          (a, hd :: lst') in
   extract (Random.int (List.length lst)) lst
 
-let choose_frequency (freqs : (int * 'a) list) : 'a =
-  let rec get_freq (freqs : (int * 'a) list) (i : int) : 'a =
+let choose_frequency (freqs : (float * 'a) list) : 'a =
+  let rec get_freq (freqs : (float * 'a) list) (m : float) : 'a =
     let (n, a) = List.hd freqs in
-    if i < n
+    if m <= n
     then a
-    else get_freq (List.tl freqs) (i - n) in
+    else get_freq (List.tl freqs) (m -. n) in
 
-  let n = List.fold_left (fun acc (m, _) -> acc + m) 0 freqs in
-  get_freq freqs (Random.int n)
+  let n = List.fold_left (fun acc (m, _) -> acc +. m) 0. freqs in
+  get_freq freqs (Random.float n)
 
 let choose_frequency_split (freqs : (int * 'a) list) : 'a * ((int * 'a) list) =
   let rec extract_freq i lst =
