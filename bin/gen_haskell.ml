@@ -1,41 +1,5 @@
 open External
-
-(* TODO: type annotations *)
-let _ty_string (_ty : ty) : string = raise Util.Unimplemented
-
-let is_infix f =
-  match f with
-  | "(+)" | "(-)"
-    | "(:)" | "(!!)" | "(++)"
-    | "(&&)" | "(||)" -> true
-  | _ -> false
-
-let make_infix f =
-  String.sub f 1 (String.length f - 2)
-
-let rec haskell_string e =
-  match e with
-  | Ref (x, _ty) -> x
-  | Lambda (xs, e_body) ->
-     (match xs with
-      | [] -> haskell_string e_body
-      | _ ->
-         "(\\" ^ String.concat " " (List.map fst xs) ^
-         " -> " ^ haskell_string e_body ^ ")")
-  | Call (e_f, e_args) ->
-    (match e_f, e_args with
-     | Ref (f, _), [e1; e2] when is_infix f ->
-        "(" ^ haskell_string e1 ^
-        " " ^ make_infix f ^ " " ^
-        haskell_string e2 ^ ")"
-     | _, _ ->
-        match e_args with
-        | [] -> haskell_string e_f
-        | _ ->
-          "(" ^ haskell_string e_f ^ " " ^
-          String.concat " " (List.map haskell_string e_args) ^ ")")
-  | Let ((_, _), _, _) -> raise Util.Unimplemented
-
+open Util
 
 let (-->) ty_params ty_body = TyFun (ty_params, ty_body)
 let tInt = TyCons ("Int", [])
@@ -82,6 +46,69 @@ let haskell_std_lib =
    ("((==)::[Int] -> [Int] -> Bool)", [tList tInt; tList tInt] --> tBool);
   ]
 
+let string_of_ty (ty0 : ty) =
+  let rec lp wr ty =
+    let wrap s =
+      if wr
+      then "(" ^ s ^ ")"
+      else s in
+    match ty with
+    | TyVar _ -> "()"
+    | TyCons ("([])", [ty']) ->
+       "[" ^ lp false ty' ^ "]"
+    | TyCons (n, tys) ->
+       (match tys with
+        | [] -> n
+        | _ ->
+           wrap (n ^ " " ^ String.concat " " (List.map (lp true) tys)))
+    | TyFun (param_tys, body_ty) ->
+       match param_tys with
+       | [] -> lp wr body_ty
+       | ty' :: tys' ->
+          wrap (lp true ty' ^ " -> " ^ lp false (TyFun (tys', body_ty)))
+    in
+  lp false ty0
+
+let is_infix f =
+  match f with
+  | "(+)" | "(-)"
+    | "(:)" | "(!!)" | "(++)"
+    | "(&&)" | "(||)" -> true
+  | _ -> false
+
+let make_infix f =
+  String.sub f 1 (String.length f - 2)
+
+let rec haskell_string e =
+  match e with
+  | Ref (x, ty) ->
+     let x_annot () = "(" ^ x ^ "::" ^ string_of_ty ty ^ ")" in
+     (match List.assoc_opt x haskell_std_lib with
+      | None -> x
+      | Some ty ->
+         if SS.is_empty (ty_vars ty)
+         then x
+         else x_annot ())
+  | Lambda (xs, e_body) ->
+     (match xs with
+      | [] -> haskell_string e_body
+      | _ ->
+         "(\\" ^ String.concat " " (List.map fst xs) ^
+         " -> " ^ haskell_string e_body ^ ")")
+  | Call (e_f, e_args) ->
+    (match e_f, e_args with
+     | Ref (f, _), [e1; e2] when is_infix f ->
+        "(" ^ haskell_string e1 ^
+        " " ^ make_infix f ^ " " ^
+        haskell_string e2 ^ ")"
+     | _, _ ->
+        match e_args with
+        | [] -> haskell_string e_f
+        | _ ->
+          "(" ^ haskell_string e_f ^ " " ^
+          String.concat " " (List.map haskell_string e_args) ^ ")")
+  | Let ((_, _), _, _) -> raise Util.Unimplemented
+
 let generate_haskell size =
   let weights x = 
     match x with
@@ -92,7 +119,7 @@ let generate_haskell size =
   let weighted_std_lib =
     List.map (fun entry -> (weights (fst entry), entry)) haskell_std_lib in
   let gen_ty = [tList tInt] --> tList tInt in
-  Generate.generate_exp weighted_std_lib size tInt gen_ty
+  Generate.generate_exp weighted_std_lib size (tVar "a") gen_ty
   (* TODO: program stats in debug mode *)
 
 let generate_batch exp_size batch_size =
@@ -102,32 +129,51 @@ let generate_batch exp_size batch_size =
              Debug.run prerr_newline;
              p)
 
-let generate_file fs =
-  "module Main where\n" ^
-  "import Control.Monad\n" ^
-  "import qualified Control.Exception as E\n" ^
-  "import System.IO (hSetBuffering, stdout, BufferMode (NoBuffering))\n" ^
-  "handler (E.ErrorCall s) = putStrLn $ \"*** Exception: \"\n" ^
-  "incomplete1 0 = [undefined]\n" ^
-  "incomplete1 n = n:(incomplete1 (n-1))\n" ^
-  "incomplete2 0 = undefined\n" ^
-  "incomplete2 n = n:(incomplete2 (n-1))\n" ^
-  "incomplete3 n 0 = undefined:reverse [0..n-1]\n" ^
-  "incomplete3 n m = n:incomplete3 (n-1) (m-1)\n" ^
-  "codeList :: [[Int] -> [Int]]\n" ^
-  "codeList = [\n" ^
-  "  " ^ String.concat ",\n  " fs ^ "\n" ^
-  "  ]\n" ^
-  "main = do\n" ^
-  "  hSetBuffering stdout NoBuffering\n" ^
-  "  forM_ codeList $ \\code -> do\n" ^
-  "    forM_ [0..5] $ \\x -> do\n" ^
-  "      E.catch (print $ code $ incomplete1 x) handler\n" ^
-  "    forM_ [0..5] $ \\x -> do\n" ^
-  "      E.catch (print $ code $ incomplete2 x) handler\n" ^
-  "    forM_ [0..5] $ \\x -> forM_ [0..x] $ \\y -> do\n" ^
-  "      E.catch (print $ code $ incomplete3 x y) handler\n" ^
-  "    putStrLn \"====\"\n"
+let print_file fs =
+
+  let rec print_lines pre post lines =
+    match lines with
+    | [] -> ()
+    | [l] -> print_string pre; print_endline l
+    | l :: lines' ->
+       print_string pre;
+       print_string l;
+       print_endline post;
+       print_lines pre post lines' in
+
+  let prelude = [
+      "module Main where";
+      "import Control.Monad";
+      "import qualified Control.Exception as E";
+      "import System.IO (hSetBuffering, stdout, BufferMode (NoBuffering))";
+      "handler (E.ErrorCall s) = putStrLn $ \"*** Exception: \"";
+      "incomplete1 0 = [undefined]";
+      "incomplete1 n = n:(incomplete1 (n-1))";
+      "incomplete2 0 = undefined";
+      "incomplete2 n = n:(incomplete2 (n-1))";
+      "incomplete3 n 0 = undefined:reverse [0..n-1]";
+      "incomplete3 n m = n:incomplete3 (n-1) (m-1)";
+    ] in
+
+  let main = [
+      "main = do";
+      "  hSetBuffering stdout NoBuffering";
+      "  forM_ codeList $ \\code -> do";
+      "    forM_ [0..5] $ \\x -> do";
+      "      E.catch (print $ code $ incomplete1 x) handler";
+      "    forM_ [0..5] $ \\x -> do";
+      "      E.catch (print $ code $ incomplete2 x) handler";
+      "    forM_ [0..5] $ \\x -> forM_ [0..x] $ \\y -> do";
+      "      E.catch (print $ code $ incomplete3 x y) handler";
+      "    putStrLn \"====\"";
+    ] in
+
+  print_lines "" "" prelude;
+  print_endline "codeList :: [[Int] -> [Int]]";
+  print_endline "codeList = [";
+  print_lines "  " "," fs;
+  print_endline "  ]";
+  print_lines "" "" main
 
 let n = ref 100
 let size = ref 25
@@ -150,4 +196,4 @@ let () =
    else Random.init !seed);
 
   let fs = Seq.map haskell_string (generate_batch !size !n) in
-  print_string (generate_file (List.of_seq fs))
+  print_file (List.of_seq fs)
