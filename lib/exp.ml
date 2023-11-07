@@ -91,22 +91,6 @@ let extvar_register_lambda ext params =
 let extvar_register_call ext args env =
   ext.calls <- (args, env) :: ext.calls
 
-(* returns true if if ty contains ty' *)
-(* TODO: less confusing name *)
-let rec ty_contains_ty ty' ty =
-  UnionFind.eq ty' ty || ty_node_contains_ty ty' (UnionFind.get ty)
-and ty_node_contains_ty ty' ty_node =
-  match ty_node with
-  | TyCons (_, ty_args) ->
-     List.exists (ty_contains_ty ty') ty_args
-  | TyArrow (ty_args, ty_body) ->
-     List.exists (ty_contains_ty ty') ty_args ||
-    ty_contains_ty ty' ty_body
-  | TyArrowExt (evar, ty_body) ->
-     List.exists (ty_contains_ty ty') evar.param_tys ||
-     ty_contains_ty ty' ty_body
-  | TyUnif _ -> false
-
 (* dictionary of zero-arg type constructors *)
 let ty_dict = ref SM.empty
 let ty_of_external_ty (ty_top : External.ty) =
@@ -133,15 +117,31 @@ exception UnificationError
 
 (* not re-entrant on UnionFind.merge because types aren't recursive *)
 let rec unify ty10 ty20 =
+
+  (* returns true if if ty_node contains ty' *)
+  let contains_ty ty' ty_node0 =
+    let rec lp_ty ty =
+      UnionFind.eq ty' ty || lp_ty_node (UnionFind.get ty)
+    and lp_ty_node ty_node =
+      match ty_node with
+      | TyCons (_, ty_args) ->
+         List.exists lp_ty ty_args
+      | TyArrow (ty_args, ty_body) ->
+         List.exists lp_ty ty_args || lp_ty ty_body
+      | TyArrowExt (evar, ty_body) ->
+         List.exists lp_ty evar.param_tys || lp_ty ty_body
+      | TyUnif _ -> false in
+    lp_ty_node ty_node0 in
+
   let _ = UnionFind.merge
     (fun ty_node1 ty_node2 ->
       match ty_node1, ty_node2 with
       | TyUnif ty1, _ ->
-         if ty_node_contains_ty ty1 ty_node2
+         if contains_ty ty1 ty_node2
          then raise UnificationError
          else ty_node2
       | _, TyUnif ty2 ->
-         if ty_node_contains_ty ty2 ty_node1
+         if contains_ty ty2 ty_node1
          then raise UnificationError
          else ty_node1
       | TyCons (n1, tys1), TyCons (n2, tys2) ->
@@ -168,8 +168,26 @@ let rec unify ty10 ty20 =
    might outweigh it? *)
 (* TODO: could merge unification variable free types here
          for faster repeat checking, kinda hacky though *)
-(* TODO: FIXME: when checking for circularity, need to recur on unif vars *)
 let can_unify ty10 ty20 =
+
+  (* returns true if if ty_node contains ty' *)
+  let contains_ty mp ty' ty_node0 =
+    let rec lp_ty ty =
+      UnionFind.eq ty' ty || lp_ty_node (UnionFind.get ty)
+    and lp_ty_node ty_node =
+      match ty_node with
+      | TyCons (_, ty_args) ->
+         List.exists lp_ty ty_args
+      | TyArrow (ty_args, ty_body) ->
+         List.exists lp_ty ty_args || lp_ty ty_body
+      | TyArrowExt (evar, ty_body) ->
+         List.exists lp_ty evar.param_tys || lp_ty ty_body
+      | TyUnif ty ->
+         match List.assq_opt (UnionFind.find ty) mp with
+         | None -> false
+         | Some ty1 -> lp_ty ty1 in
+    lp_ty_node ty_node0 in
+
   let rec lp mp ty1 ty2 =
     if UnionFind.eq ty1 ty2 then mp else
     match UnionFind.get ty1, UnionFind.get ty2 with
@@ -177,14 +195,14 @@ let can_unify ty10 ty20 =
        (match List.assq_opt (UnionFind.find ty1) mp with
         | Some ty1' -> lp mp ty1' ty2
         | None ->
-           if ty_node_contains_ty ty1 ty_node2
+           if contains_ty mp ty1 ty_node2
            then raise UnificationError
            else (UnionFind.find ty1, ty2) :: mp)
     | ty_node1, TyUnif _ ->
        (match List.assq_opt (UnionFind.find ty2) mp with
         | Some ty2' -> lp mp ty1 ty2'
         | None ->
-           if ty_node_contains_ty ty2 ty_node1
+           if contains_ty mp ty2 ty_node1
            then raise UnificationError
            else (UnionFind.find ty2, ty1) :: mp)
     | TyCons (n1, tys1), TyCons (n2, tys2) ->
