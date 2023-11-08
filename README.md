@@ -1,14 +1,14 @@
 
 A well-typed program generator framework written in OCaml.
 
+This repo is under heavy development to create a cohesive interface for writing generators for new languages.
 
+Dependencies:
+* OCaml
+* Dune
 
-Required:
-```
-ocaml
-dune
-utop (opam install utop)
-```
+Opam Dependencies:
+* `unionFind`
 
 
 to build:
@@ -20,13 +20,4 @@ dune build
 to run:
 ```
 dune exec -- gen_haskell -n 1000 -size 15
-```
-
-
-to debug:
-```
-dune utop
-...
-let Debug.debug_mode := true;;
-let p = Generate.generate_fp (Generators.main (fun x -> 1.)) 100 Type.FlatTyInt in PrettyPrinter.pretty_print p;;
 ```
