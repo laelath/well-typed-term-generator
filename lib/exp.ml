@@ -233,7 +233,7 @@ let can_unify ty10 ty20 =
     | _, _ -> raise UnificationError
   in
   try
-    let _ = lp [] ty10 ty20 in
+    ignore(lp [] ty10 ty20);
     true
   with
     UnificationError -> false

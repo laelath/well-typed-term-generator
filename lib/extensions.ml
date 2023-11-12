@@ -30,6 +30,37 @@ module Int = struct
 
 end
 
+module List = struct
+
+  include List
+
+  let rec fold_left_opt f a l =
+    match l with
+    | [] -> Some a
+    | x :: l' ->
+      match f a x with
+      | None -> None
+      | Some a' -> fold_left_opt f a' l'
+
+  let rec fold_left_opt2 f a l1 l2 =
+    match l1, l2 with
+    | [], [] -> Some a
+    | [], _ | _, [] -> invalid_arg "List.fold_left_opt2"
+    | x :: l1', y :: l2' ->
+      match f a x y with
+      | None -> None
+      | Some a' -> fold_left_opt2 f a' l1' l2'
+
+  let zippers l0 =
+    let rec lp acc l =
+      match l with
+      | [] -> []
+      | x :: l' -> (acc, x, l') :: lp (x :: acc) l'
+    in lp [] l0
+
+
+end
+
 (* non-empty lists *)
 (* stores the first element unlike haskell,
    but I think that makes more sense for strict evaluation *)
@@ -67,6 +98,9 @@ module Fun = struct
 
 end
 
+(* doesn't really work bc of OCaml's associativity :( *)
 let ($) f a = f a
+
+(* the wand of destiny *)
 let (-.*) f m = fun a b -> m a (f b)
 
