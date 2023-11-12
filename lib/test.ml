@@ -1,6 +1,6 @@
 open Extensions
 
-module type GenType = sig
+module type ExpType = sig
   type (!+'exp, !+'ty) exp
   type (!+'exp, !+'ty) ctx
   type !+'ty ty
@@ -25,10 +25,10 @@ module type GenType = sig
 
   val ty_eq : 'ty 'a.
     ('ty -> 'ty -> 'a -> 'a option) ->
-    'ty ty -> 'ty ty -> 'a option
+    'ty ty -> 'ty ty -> 'a -> 'a option
 end
 
-module Make(G : GenType) = struct
+module Make(E : ExpType) = struct
 
   type 'a mlist_node =
     | Mt | Elem of { value: 'a; mutable next: 'a mlist_node }
@@ -37,29 +37,29 @@ module Make(G : GenType) = struct
   let mcons x ml = ref (Elem {value = x; next = !ml})
 
   (* helper function *)
-  let exp_map_exp f = G.exp_map f Fun.id
-  let ctx_map_exp f = G.ctx_map f Fun.id
+  let exp_map_exp f = E.exp_map f Fun.id
+  let ctx_map_exp f = E.ctx_map f Fun.id
 
   type exp_node =
     | Cut
-    | E of (ctx, ty) G.exp
+    | E of (ctx, ty) E.exp
     | LP of linkvar * ctx
     | LN of linkvar * ctx
   and exp = {mutable exp_node: exp_node; mutable ctx: ctx}
   and ctx_node =
     | CCut
     | Top
-    | C of (ctx, ty) G.ctx * exp
+    | C of (ctx, ty) E.ctx * exp
     | CLP of linkvar * exp
     | CLN of linkvar * exp
   and ctx = {mutable ctx_node: ctx_node; mutable hole: exp}
   and ty_node =
     | Unif of ty
-    | T of ty G.ty
+    | T of ty E.ty
     | L of linkvar
   and ty = ty_node UnionFind.elem
   and linkvar = {
-    mutable link_ty : ty G.ty;
+    mutable link_ty : ty E.ty;
     mutable link_ends_pos : exp list;
     mutable link_ends_neg : exp list;
   }
@@ -86,7 +86,7 @@ module Make(G : GenType) = struct
 
   type exp_cutting =
     | Boundary of exp
-    | CutE of (exp_cutting, ty) G.exp
+    | CutE of (exp_cutting, ty) E.exp
     | CutLP of linkvar * exp_cutting
     | CutLN of linkvar * exp_cutting
 
@@ -107,7 +107,7 @@ module Make(G : GenType) = struct
     | CutE ec_g ->
       let e_g = exp_map_exp build ec_g in
       let e = make_exp (E e_g) CCut in
-      let children = G.exp_unplug e_g in
+      let children = E.exp_unplug e_g in
       List.iter (fun (child, ctx) -> child.ctx_node <- C (ctx, e)) children;
       e.ctx
     | CutLP (lvar, ec') ->
@@ -135,7 +135,7 @@ module Make(G : GenType) = struct
     | CutE ec_g ->
       let e_g = exp_map_exp build ec_g in
       ctx.hole.exp_node <- E e_g;
-      let children = G.exp_unplug e_g in
+      let children = E.exp_unplug e_g in
       List.iter (fun (child, ctx_g) -> child.ctx_node <- C (ctx_g, ctx.hole))
                 children
     | CutLP (lvar, ec') ->
@@ -153,7 +153,7 @@ module Make(G : GenType) = struct
 
   type ctx_cutting =
     | CBoundary of ctx
-    | CutC of (exp_cutting, ty) G.ctx * ctx_cutting
+    | CutC of (exp_cutting, ty) E.ctx * ctx_cutting
     | CutCLP of linkvar * ctx_cutting
     | CutCLN of linkvar * ctx_cutting
 
@@ -179,9 +179,9 @@ module Make(G : GenType) = struct
       let e = ctx_build cc' in
       let ctx_g = ctx_map_exp build ec_ctx_g in
       let e' = make_exp Cut CCut in
-      let e_g = G.ctx_plug ctx_g e'.ctx in
+      let e_g = E.ctx_plug ctx_g e'.ctx in
       e.exp_node <- E e_g;
-      let children = G.exp_unplug e_g in
+      let children = E.exp_unplug e_g in
       (* update of the children should include e' *)
       List.iter (fun (child, c_ctx_g) -> child.ctx_node <- C (c_ctx_g, e))
                 children;
@@ -211,9 +211,9 @@ module Make(G : GenType) = struct
     | CutC (ec_ctx_g, cc') ->
       let e' = ctx_build cc' in
       let ctx_g = ctx_map_exp build ec_ctx_g in
-      let e_g = G.ctx_plug ctx_g e.ctx in
+      let e_g = E.ctx_plug ctx_g e.ctx in
       e'.exp_node <- E e_g;
-      let children = G.exp_unplug e_g in
+      let children = E.exp_unplug e_g in
       List.iter (fun (child, c_ctx_g) -> child.ctx_node <- C (c_ctx_g, e'))
                 children
     | CutCLP (lvar, cc') ->
@@ -301,7 +301,7 @@ module Make(G : GenType) = struct
            provide a short-circuiting option fold *)
   let rec ty_contains_linkvar lvar ty =
     let f ty = 
-      G.ty_fold (fun ty' b -> b || ty_contains_linkvar lvar ty')
+      E.ty_fold (fun ty' b -> b || ty_contains_linkvar lvar ty')
                 ty false in
     match UnionFind.get ty with
     | Unif _ -> false
@@ -316,7 +316,7 @@ module Make(G : GenType) = struct
     (* returns true if ty_node contains ty' *)
     let rec contains_ty ty' ty_n =
       let f ty_g =
-        G.ty_fold (fun ty'' b -> b || ty' == ty'' ||
+        E.ty_fold (fun ty'' b -> b || ty' == ty'' ||
                      contains_ty ty' (UnionFind.get ty''))
                   ty_g false in
       match ty_n with
@@ -332,8 +332,8 @@ module Make(G : GenType) = struct
       else ty_n
     | T ty_g1, T ty_g2 ->
       begin
-        match (G.ty_eq (fun ty1 ty2 () -> Some (unify ty1 ty2))
-                       ty_g1 ty_g2) with
+        match (E.ty_eq (fun ty1 ty2 () -> Some (unify ty1 ty2))
+                       ty_g1 ty_g2 ()) with
         | Some () -> ty_n1
         | None -> raise UnificationError
       end
@@ -368,7 +368,7 @@ module Make(G : GenType) = struct
     (* returns true if ty_node contains ty' with substitution mp*)
     let rec contains_ty mp ty' ty_n =
       let f ty_g =
-        G.ty_fold (fun ty'' b -> b || ty' == ty'' ||
+        E.ty_fold (fun ty'' b -> b || ty' == ty'' ||
                      contains_ty mp ty' (UnionFind.get ty''))
                   ty_g false in
       match ty_n with
@@ -406,7 +406,7 @@ module Make(G : GenType) = struct
         then raise UnificationError
         else Some mp
       | T ty_g1, T ty_g2 ->
-        G.ty_eq (fun ty1 ty2 mp' -> lp mp' ty1 ty2) ty_g1 ty_g2
+        E.ty_eq (fun ty1 ty2 mp' -> lp mp' ty1 ty2) ty_g1 ty_g2 mp
       | _, _ -> None in
 
     match lp [] ty1_0 ty2_0 with
@@ -415,6 +415,10 @@ module Make(G : GenType) = struct
 
 end
 
+
+module Thing : ExpType = struct
+
+[@@@warning "-37"]
 
 type 'ty var = (string * 'ty)
 
@@ -486,6 +490,8 @@ let ty_eq f ty1 ty2 a =
     List.fold_left_opt2 g a ty_args1 ty_args2
     |> Option.fold ~none:None ~some:(f ty_body1 ty_body2)
   | _, _ -> None
+
+end
 
 (* type checking has to be written in a module that has access creating
    expression manipulator types *)
