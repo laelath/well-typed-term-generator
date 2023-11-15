@@ -94,12 +94,11 @@ module Fun = struct
   include Fun
 
   let curry f x y = f (x, y)
-  let uncurry f (x, y) = f x y 
+  let uncurry f (x, y) = f x y
+
+  let compose = (@@)
 
 end
-
-(* doesn't really work bc of OCaml's associativity :( *)
-let ($) f a = f a
 
 (* the wand of destiny *)
 let (-.*) f m = fun a b -> m a (f b)

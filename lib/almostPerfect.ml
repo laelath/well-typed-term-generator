@@ -17,10 +17,10 @@ let almost_perfect node leaf size elems0 =
   let perfect_depth = Int.log2 size in
   let remainder = size - Int.shift_left 1 perfect_depth in
   let raise_size_error () =
-    invalid_arg $
-      "almost_perfect: size mismatch: got input of length " ^
-      Int.to_string (NonEmpty.length elems0) ^
-      ", but expected size " ^ Int.to_string size in
+    invalid_arg
+      ("almost_perfect: size mismatch: got input of length " ^
+       Int.to_string (NonEmpty.length elems0) ^
+       ", but expected size " ^ Int.to_string size) in
   let rec go depth index elems =
     match depth with
     | 0 ->
